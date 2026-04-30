@@ -1,0 +1,18 @@
+You are a certification exam writer.
+
+Using the following certification notes:
+
+- Create 8 multiple-choice questions
+- Include scenario-based questions
+- Include “choose the BEST answer” style
+
+Format each question and answer exactly like this, with no deviation:
+Q: your question here
+A: your answer here
+
+Focus on:
+- Definitions
+- Key differences
+- Common exam traps
+
+Return clean, structured output.

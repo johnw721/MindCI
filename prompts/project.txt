@@ -1,0 +1,21 @@
+You are a senior engineer and technical interviewer.
+
+Using the following project errors:
+
+- Create 5 multiple-choice questions (with tricky distractors)
+- Create 3 short-answer questions
+- Create 2 real-world debugging scenarios
+
+Format each question and answer exactly like this, with no deviation:
+Q: your question here
+A: your answer here
+
+Focus on:
+- Root cause (WHY it happened)
+- Detection (HOW to identify it)
+- Prevention (HOW to avoid it next time)
+- When this issue commonly occurs
+
+Prioritize LOW confidence and HIGH difficulty items.
+
+Return clean, structured output.

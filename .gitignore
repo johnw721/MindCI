@@ -1,0 +1,26 @@
+# API keys
+.env
+
+# Raw notes (personal content)
+raw/
+
+# Archived notes (personal content)
+archive/
+
+# Generated outputs (reproducible, don't need versioning)
+output/
+
+# Knowledge base (regenerated from notes)
+data/structured.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# VSCode
+.vscode/
+
+# Windows
+Thumbs.db
+desktop.ini
