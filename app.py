@@ -16,11 +16,11 @@ from pipeline.scenarios import (
     generate_scenarios, parse_scenarios,
     generate_multifile_scenarios, parse_multifile_scenarios
 )
-from pipeline.interview import score_answer, build_interview_pool
+from pipeline.interview import score_answer, build_interview_pool, append_session, get_summary_stats, get_topic_progression
 from pipeline.jd_analyzer import run_gap_analysis, run_batch_analysis, parse_jds
 from pipeline.weekly import generate_weekly_plan
 from pipeline.suggestions import generate_topic_suggestions, generate_cold_test_questions
-from pipeline.quality import check_note_quality, score_kb_entry
+from pipeline.quality import check_note_quality, score_kb_entry, generate_enrichment_questions, rewrite_enriched_note
 
 client = Anthropic()
 
@@ -67,6 +67,111 @@ with tab1:
                 st.success("All notes passed quality check -- ready to convert")
             else:
                 st.info("Fix issues above for better scenario and flashcard output. You can still convert as-is.")
+
+
+    st.markdown("---")
+    st.markdown("#### Note enrichment assistant")
+    st.caption("Upload a thin note, answer a few questions, Claude rewrites it -- then convert")
+
+    enrich_file = st.file_uploader("Upload a note to enrich", type="txt", key="enrich_upload")
+
+    if enrich_file:
+        enrich_text = enrich_file.read().decode("utf-8", errors="ignore")
+
+        if "enrich_note" not in st.session_state:
+            st.session_state.enrich_note = ""
+        if "enrich_questions" not in st.session_state:
+            st.session_state.enrich_questions = []
+        if "enrich_answers" not in st.session_state:
+            st.session_state.enrich_answers = []
+        if "enrich_rewritten" not in st.session_state:
+            st.session_state.enrich_rewritten = ""
+        if "enrich_filename" not in st.session_state:
+            st.session_state.enrich_filename = ""
+
+        # Reset if new file uploaded
+        if st.session_state.enrich_filename != enrich_file.name:
+            st.session_state.enrich_note = enrich_text
+            st.session_state.enrich_questions = []
+            st.session_state.enrich_answers = []
+            st.session_state.enrich_rewritten = ""
+            st.session_state.enrich_filename = enrich_file.name
+
+        st.markdown("**Original note:**")
+        st.text_area("", value=enrich_text, height=120, disabled=True, key="enrich_preview")
+
+        # Step 1 — generate questions
+        if not st.session_state.enrich_questions:
+            if st.button("Generate enrichment questions", key="enrich_gen_q"):
+                with st.spinner("Analyzing note..."):
+                    try:
+                        questions = generate_enrichment_questions(enrich_text)
+                        st.session_state.enrich_questions = questions
+                        st.session_state.enrich_answers = [""] * len(questions)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+        # Step 2 — answer questions
+        elif not st.session_state.enrich_rewritten:
+            st.markdown("**Answer these questions to enrich your note:**")
+            for i, q in enumerate(st.session_state.enrich_questions):
+                ans = st.text_input(f"Q{i+1}: {q}", key=f"enrich_ans_{i}",
+                                    value=st.session_state.enrich_answers[i])
+                st.session_state.enrich_answers[i] = ans
+
+            answered = sum(1 for a in st.session_state.enrich_answers if a.strip())
+            st.caption(f"{answered} of {len(st.session_state.enrich_questions)} answered")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Rewrite note", disabled=answered < 2, key="enrich_rewrite"):
+                    with st.spinner("Rewriting..."):
+                        try:
+                            rewritten = rewrite_enriched_note(
+                                enrich_text,
+                                st.session_state.enrich_questions,
+                                st.session_state.enrich_answers
+                            )
+                            st.session_state.enrich_rewritten = rewritten
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+            with col2:
+                if st.button("Start over", key="enrich_reset"):
+                    st.session_state.enrich_questions = []
+                    st.session_state.enrich_answers = []
+                    st.rerun()
+
+        # Step 3 — review and approve
+        else:
+            st.markdown("**Rewritten note:**")
+            edited = st.text_area("Review and edit if needed",
+                                   value=st.session_state.enrich_rewritten,
+                                   height=250, key="enrich_edited")
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("Approve and save to raw/", key="enrich_approve"):
+                    os.makedirs("raw", exist_ok=True)
+                    save_path = f"raw/enriched_{enrich_file.name}"
+                    with open(save_path, "w", encoding="utf-8") as f:
+                        f.write(edited)
+                    st.success(f"Saved to {save_path} -- upload it in the file uploader above to convert")
+                    st.session_state.enrich_questions = []
+                    st.session_state.enrich_answers = []
+                    st.session_state.enrich_rewritten = ""
+                    st.session_state.enrich_filename = ""
+            with col2:
+                if st.button("Rewrite again", key="enrich_redo"):
+                    st.session_state.enrich_rewritten = ""
+                    st.rerun()
+            with col3:
+                st.download_button("Download enriched note",
+                                   data=edited.encode("utf-8"),
+                                   file_name=f"enriched_{enrich_file.name}",
+                                   mime="text/plain",
+                                   key="enrich_download")
 
     if st.button("Run Convert", disabled=not uploaded_files):
         all_notes = ""
@@ -313,6 +418,40 @@ with tab2:
                 st.session_state.interview_graded = None
 
             if not st.session_state.interview_active:
+                # Session history summary
+                stats = get_summary_stats()
+                if stats:
+                    st.markdown("#### Your progress")
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Sessions", stats["total_sessions"])
+                    col2.metric("Questions answered", stats["total_questions"])
+                    col3.metric("Overall avg", f"{stats['overall_avg']}/10")
+                    if stats["session_trend"]:
+                        trend = stats["session_trend"]
+                        delta = round(trend[-1]["avg"] - trend[0]["avg"], 1) if len(trend) > 1 else 0
+                        col4.metric("Score trend", f"{trend[-1]['avg']}/10", delta=f"{delta:+.1f}" if delta != 0 else None)
+
+                    if stats["session_trend"] and len(stats["session_trend"]) > 1:
+                        st.markdown("**Session history**")
+                        for s in reversed(stats["session_trend"][-8:]):
+                            bar = "█" * int(s["avg"]) + "░" * (10 - int(s["avg"]))
+                            st.markdown(f"`{s['date'][:10]}` [{bar}] {s['avg']}/10 ({s['pct']}%)")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if stats["most_improved"]:
+                            st.markdown("**Most improved**")
+                            for t in stats["most_improved"][:3]:
+                                arrow = "↑" if t["delta"] > 0 else "↓" if t["delta"] < 0 else "→"
+                                st.markdown(f"{arrow} **{t['topic']}** {t['first']} → {t['last']}/10")
+                    with col2:
+                        if stats["weak_spots"]:
+                            st.markdown("**Still needs work**")
+                            for t in stats["weak_spots"][:3]:
+                                st.markdown(f"**{t['topic']}** avg {t['avg_score']}/10 over {t['attempts']} attempts")
+
+                    st.markdown("---")
+
                 pool = build_interview_pool(num_questions)
                 if not pool:
                     st.warning("No flashcards or scenarios found. Run Generate first.")
@@ -472,6 +611,7 @@ with tab2:
                     }
                     with open("output/interview_report.json", "w", encoding="utf-8") as f:
                         json.dump(report, f, indent=2)
+                    append_session(report)
 
                     col1, col2 = st.columns(2)
                     with col1:

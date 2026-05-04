@@ -105,3 +105,91 @@ def build_interview_pool(n=8):
             break
 
     return selected
+
+
+HISTORY_PATH = "output/interview_history.json"
+
+def load_history():
+    if not os.path.exists(HISTORY_PATH):
+        return []
+    with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def append_session(session_report):
+    history = load_history()
+    history.append(session_report)
+    os.makedirs("output", exist_ok=True)
+    with open(HISTORY_PATH, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2)
+
+def get_topic_progression():
+    history = load_history()
+    if not history:
+        return {}
+
+    # topic -> list of {date, avg_score, verdict_counts}
+    progression = {}
+    for session in history:
+        date = session.get("date", "unknown")
+        for q in session.get("questions", []):
+            topic = q.get("topic", "unknown")
+            score = q.get("score", 0)
+            verdict = q.get("verdict", "unknown")
+            if topic not in progression:
+                progression[topic] = []
+            progression[topic].append({
+                "date": date,
+                "score": score,
+                "verdict": verdict
+            })
+
+    return progression
+
+def get_summary_stats():
+    history = load_history()
+    if not history:
+        return None
+
+    total_sessions = len(history)
+    all_scores = [q["score"] for s in history for q in s.get("questions", []) if "score" in q]
+    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
+
+    # Score trend across sessions
+    session_avgs = []
+    for s in history:
+        scores = [q["score"] for q in s.get("questions", []) if "score" in q]
+        if scores:
+            session_avgs.append({
+                "date": s.get("date", ""),
+                "avg": round(sum(scores) / len(scores), 1),
+                "pct": s.get("pct", 0)
+            })
+
+    # Most improved topics
+    progression = get_topic_progression()
+    improvements = []
+    for topic, entries in progression.items():
+        if len(entries) >= 2:
+            first = entries[0]["score"]
+            last = entries[-1]["score"]
+            delta = last - first
+            improvements.append({"topic": topic, "delta": delta, "first": first, "last": last})
+    improvements.sort(key=lambda x: x["delta"], reverse=True)
+
+    # Persistent weak spots
+    weak_spots = []
+    for topic, entries in progression.items():
+        if len(entries) >= 2:
+            avg = sum(e["score"] for e in entries) / len(entries)
+            if avg < 6:
+                weak_spots.append({"topic": topic, "avg_score": round(avg, 1), "attempts": len(entries)})
+    weak_spots.sort(key=lambda x: x["avg_score"])
+
+    return {
+        "total_sessions": total_sessions,
+        "total_questions": len(all_scores),
+        "overall_avg": round(avg_score, 1),
+        "session_trend": session_avgs,
+        "most_improved": improvements[:5],
+        "weak_spots": weak_spots[:5]
+    }
