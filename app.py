@@ -5,585 +5,24 @@ import shutil
 from datetime import datetime
 from anthropic import Anthropic
 
+from config import VALID_TYPES, JD_SKILL_FREQUENCIES
+from utils import (
+    load_knowledge_base, load_prompt,
+    load_anki_cards, load_scenario_cards, save_reviewed_cards
+)
+from pipeline.convert import convert_to_json, parse_and_save_json
+from pipeline.generate import build_dynamic_prompt, parse_qa, classify
+from pipeline.scenarios import (
+    generate_scenarios, parse_scenarios,
+    generate_multifile_scenarios, parse_multifile_scenarios
+)
+from pipeline.interview import score_answer, build_interview_pool
+from pipeline.jd_analyzer import run_gap_analysis, run_batch_analysis, parse_jds
+from pipeline.weekly import generate_weekly_plan
+from pipeline.suggestions import generate_topic_suggestions, generate_cold_test_questions
+from pipeline.quality import check_note_quality, score_kb_entry
+
 client = Anthropic()
-
-st.set_page_config(page_title="MindCI", page_icon="🧠", layout="wide")
-
-# Shared helpers
-
-def load_knowledge_base():
-    path = "data/structured.json"
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def load_prompt(path):
-    if not os.path.exists(path):
-        return ""
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
-# Convert logic
-
-def convert_to_json(raw_text):
-    prompt = f"""
-Convert the following raw technical notes into structured JSON.
-Preserve the source filename in each JSON entry as "source".
-Return ONLY raw JSON with no markdown, no code fences, no explanation.
-
-Rules:
-- Detect type: project, certification, exploration
-- Return a JSON array
-- Use fields:
-
-project:
-  error, root_cause, fix, concept, confidence, difficulty
-
-certification:
-  topic, key_points, confusion, importance, confidence, difficulty
-
-exploration:
-  tool, description, comparison, use_cases, confidence, difficulty
-
-RAW NOTES:
-{raw_text}
-"""
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
-
-def parse_and_save_json(raw_response):
-    clean = raw_response.strip()
-    if clean.startswith("```"):
-        clean = clean.split("```")[1]
-        if clean.startswith("json"):
-            clean = clean[4:]
-    parsed = json.loads(clean.strip())
-    os.makedirs("data", exist_ok=True)
-    with open("data/structured.json", "w", encoding="utf-8") as f:
-        json.dump(parsed, f, indent=2)
-    return parsed
-
-# Generate logic
-
-def build_dynamic_prompt(base_prompt, entry):
-    confidence = entry.get("confidence", "Low")
-    difficulty = entry.get("difficulty", "Medium")
-
-    if confidence == "High":
-        modifier = """
-CONFIDENCE LEVEL: High - candidate knows this well.
-Generate questions that test edge cases, failure modes, and cross-domain scenarios.
-Avoid surface-level definitions.
-Format each question and answer exactly like this:
-Q: your question here
-A: your answer here
-"""
-    elif confidence == "Medium":
-        modifier = """
-CONFIDENCE LEVEL: Medium - candidate has partial understanding.
-Generate questions that reinforce core mechanisms, common mistakes, and misconceptions.
-Include one "explain to a junior engineer" question.
-Format each question and answer exactly like this:
-Q: your question here
-A: your answer here
-"""
-    else:
-        modifier = """
-CONFIDENCE LEVEL: Low - candidate has minimal understanding.
-Generate foundational questions from first principles. Answers should teach, not just hint.
-Format each question and answer exactly like this:
-Q: your question here
-A: your answer here
-"""
-
-    difficulty_note = ""
-    if difficulty == "Hard":
-        difficulty_note = "\nDIFFICULTY: Hard - push deeper, assume technical audience.\n"
-    elif difficulty == "Easy":
-        difficulty_note = "\nDIFFICULTY: Easy - keep language approachable.\n"
-
-    return f"{base_prompt}{modifier}{difficulty_note}\n\nDATA:\n{json.dumps(entry, indent=2)}"
-
-def parse_qa(text):
-    cards = []
-    lines = text.split("\n")
-    q, a_lines = None, []
-    for line in lines:
-        line = line.strip()
-        if line.startswith("Q:"):
-            if q and a_lines:
-                cards.append((q, " ".join(a_lines)))
-            q = line.replace("Q:", "").strip()
-            a_lines = []
-        elif line.startswith("A:"):
-            a_lines = [line.replace("A:", "").strip()]
-        elif a_lines and line:
-            a_lines.append(line)
-    if q and a_lines:
-        cards.append((q, " ".join(a_lines)))
-    return cards
-
-def classify(entry):
-    c = entry.get("confidence", "Low")
-    if c == "High":
-        return "AUTO-PASS"
-    elif c == "Medium":
-        return "REVIEW"
-    return "PRIORITY"
-
-# Flashcard review logic
-
-def load_anki_cards():
-    path = "output/anki.csv"
-    if not os.path.exists(path):
-        return []
-    cards = []
-    with open(path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            parts = line.strip().split("\t")
-            if len(parts) >= 2:
-                cards.append({
-                    "id": i,
-                    "question": parts[0],
-                    "answer": parts[1],
-                    "tags": parts[2] if len(parts) > 2 else "",
-                    "difficulty": parts[3] if len(parts) > 3 else "",
-                    "confidence": parts[4] if len(parts) > 4 else "",
-                    "status": "pending"
-                })
-    return cards
-
-def save_reviewed_cards(cards):
-    os.makedirs("output", exist_ok=True)
-    approved = [c for c in cards if c["status"] != "rejected"]
-    rejected = [c for c in cards if c["status"] == "rejected"]
-    with open("output/anki.csv", "w", encoding="utf-8") as f:
-        for c in approved:
-            f.write(f"{c['question']}\t{c['answer']}\t{c['tags']}\t{c['difficulty']}\t{c['confidence']}\n")
-    with open("output/anki_rejected.csv", "w", encoding="utf-8") as f:
-        for c in rejected:
-            f.write(f"{c['question']}\t{c['answer']}\t{c['tags']}\t{c['difficulty']}\t{c['confidence']}\n")
-    return len(approved), len(rejected)
-
-# Topic suggestion logic
-
-JD_SKILL_FREQUENCIES = {
-    "Kubernetes": 0.85, "Terraform": 0.80, "AWS": 0.90, "CI/CD": 0.82,
-    "Python": 0.75, "Docker": 0.78, "Helm": 0.65, "Prometheus": 0.60,
-    "Grafana": 0.58, "ArgoCD": 0.55, "GitOps": 0.52, "Ansible": 0.50,
-    "Linux": 0.72, "Networking/VPC": 0.68, "IAM": 0.70, "Security/WAF": 0.62,
-    "Observability": 0.60, "EKS": 0.65, "Lambda": 0.70, "API Gateway": 0.58,
-    "AIOps": 0.40, "MLOps": 0.35, "Cost Optimization": 0.48, "SRE practices": 0.55
-}
-
-def generate_topic_suggestions(knowledge_base, jd_report=None):
-    kb_summary = [{
-        "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
-        "confidence": e.get("confidence", "Low"),
-        "type": e.get("type")
-    } for e in knowledge_base]
-
-    jd_gaps = []
-    if jd_report:
-        jd_gaps = [g["domain"] for g in jd_report.get("priority_gaps", [])]
-    jd_gap_block = f"\nActive JD priority gaps: {jd_gaps}" if jd_gaps else ""
-
-    prompt = f"""You are a learning advisor for a Cloud/DevOps engineer preparing for job interviews.
-
-CURRENT KNOWLEDGE BASE:
-{json.dumps(kb_summary, indent=2)}
-
-MARKET SKILL FREQUENCIES (how often skills appear in Cloud Engineer JDs):
-{json.dumps(JD_SKILL_FREQUENCIES, indent=2)}
-{jd_gap_block}
-
-Analyze the knowledge base against market demand and return ONLY a JSON object, no markdown:
-{{
-  "uncovered_high_demand": [
-    {{"topic": "...", "market_frequency": 0.0, "reason": "one sentence why this matters now", "suggested_note_prompt": "a specific prompt they can use to start learning this"}}
-  ],
-  "weak_but_in_demand": [
-    {{"topic": "...", "current_confidence": "Low|Medium", "market_frequency": 0.0, "reason": "one sentence", "suggested_note_prompt": "..."}}
-  ],
-  "emerging_to_watch": [
-    {{"topic": "...", "reason": "one sentence on why this is gaining traction"}}
-  ],
-  "summary": "2 sentence overview of biggest gaps relative to market demand"
-}}
-
-uncovered_high_demand: topics with market_frequency > 0.5 with ZERO entries in knowledge base
-weak_but_in_demand: topics present but Low confidence AND market_frequency > 0.5
-emerging_to_watch: up to 3 topics gaining traction in Cloud/DevOps not yet in knowledge base
-Limit each list to top 5 items maximum."""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
-
-# JD Analysis logic
-
-def run_gap_analysis(jd_text, knowledge_base):
-    kb_summary = [{
-        "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
-        "type": e.get("type"),
-        "confidence": e.get("confidence", "Unknown"),
-        "difficulty": e.get("difficulty", "Unknown"),
-    } for e in knowledge_base]
-
-    prompt = f"""You are analyzing a job description against a candidate's technical knowledge base.
-
-CANDIDATE KNOWLEDGE BASE:
-{json.dumps(kb_summary, indent=2)}
-
-JOB DESCRIPTION:
-{jd_text}
-
-Return ONLY a JSON object, no markdown, no extra text:
-{{
-  "role_title": "extracted role title",
-  "overall_readiness": "Ready|Partial|Not Ready",
-  "readiness_score": <0-100>,
-  "matched_skills": [{{"domain": "...", "candidate_confidence": "High|Medium|Low|None", "status": "covered|partial|gap"}}],
-  "priority_gaps": [{{"domain": "...", "urgency": "High|Medium", "action": "one-line recommendation"}}],
-  "strengths": ["..."],
-  "summary": "2 sentence readiness summary"
-}}"""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
-
-
-# Batch JD analysis logic
-
-def run_batch_analysis(jd_texts, knowledge_base):
-    kb_summary = [{
-        "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
-        "type": e.get("type"),
-        "confidence": e.get("confidence", "Unknown"),
-        "difficulty": e.get("difficulty", "Unknown"),
-    } for e in knowledge_base]
-
-    jd_block = ""
-    for i, jd in enumerate(jd_texts):
-        jd_block += f"\n--- JD {i+1} ---\n{jd.strip()}\n"
-
-    prompt = f"""You are analyzing multiple job descriptions against a candidate's technical knowledge base.
-
-CANDIDATE KNOWLEDGE BASE:
-{json.dumps(kb_summary, indent=2)}
-
-JOB DESCRIPTIONS:
-{jd_block}
-
-Return ONLY a JSON object, no markdown, no extra text:
-{{
-  "individual_results": [
-    {{
-      "jd_number": 1,
-      "role_title": "...",
-      "readiness_score": 0,
-      "overall_readiness": "Ready|Partial|Not Ready",
-      "top_gaps": ["gap1", "gap2", "gap3"],
-      "top_strengths": ["strength1", "strength2"]
-    }}
-  ],
-  "aggregate": {{
-    "most_common_gaps": [{{"skill": "...", "appears_in": 0, "urgency": "High|Medium"}}],
-    "consistent_strengths": ["skill1", "skill2"],
-    "avg_readiness_score": 0,
-    "best_fit_role": "role title from above",
-    "summary": "2-3 sentence summary of overall market fit and biggest pattern across all JDs"
-  }}
-}}
-
-most_common_gaps: skills that appear as gaps in 2 or more JDs, sorted by frequency
-consistent_strengths: skills covered across most JDs
-Limit most_common_gaps to top 8."""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=3000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
-
-def parse_jds(text):
-    import re
-    parts = re.split(r"(?m)^---+\s*$", text.strip())
-    jds = [p.strip() for p in parts if len(p.strip()) > 100]
-    return jds if len(jds) > 1 else [text.strip()]
-
-# Weekly Plan logic
-
-def generate_weekly_plan(priority_gaps, role_title, hours_per_week):
-    top_gaps = priority_gaps[:2]
-    skills_block = "\n".join(
-        [f"- {g['domain']} (urgency: {g['urgency']}): {g['action']}" for g in top_gaps]
-    )
-    prompt = f"""You are a career coach for a Cloud/DevOps engineer actively job hunting.
-
-Target role: {role_title}
-Available study time: {hours_per_week} hours this week
-Top skill gaps to close:
-{skills_block}
-
-For EACH skill gap above, generate exactly:
-1. Hands-on project - a concrete mini-project they can build and put on GitHub
-2. Blog/article idea - a specific title they could write to demonstrate knowledge
-3. Lab/tutorial - a reusable step-by-step exercise
-4. Resume bullet - one ready-to-paste bullet point assuming they complete the project
-5. Interview story - a 2-3 sentence STAR-format story they can tell in interviews
-
-Then generate a single 7-day execution plan covering both skills within {hours_per_week} hours.
-Be specific with days (Day 1, Day 2 etc.) and time estimates per task.
-
-Format clearly with headers for each skill and the weekly plan."""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
-
-
-# Scenario generation logic
-
-SCENARIO_TYPES = {
-    "what_does_this_do": "Read a code/config snippet and explain its behavior",
-    "whats_wrong":       "Identify the bug, misconfiguration, or security issue",
-    "fix_it":            "Diagnose the problem and produce a corrected version",
-    "architecture":      "Evaluate a system design and identify tradeoffs or failure points"
-}
-
-def generate_scenarios(entry):
-    entry_type = entry.get("type", "exploration")
-    confidence = entry.get("confidence", "Low")
-    label = entry.get("topic") or entry.get("concept") or entry.get("tool") or entry.get("error", "unknown")
-
-    # Bias scenario types by entry type
-    if entry_type == "project":
-        types_to_use = ["whats_wrong", "fix_it", "what_does_this_do"]
-    elif entry_type == "certification":
-        types_to_use = ["what_does_this_do", "whats_wrong", "architecture"]
-    else:
-        types_to_use = ["what_does_this_do", "architecture", "whats_wrong"]
-
-    # High confidence gets harder scenario types
-    if confidence == "High":
-        difficulty_instruction = "Make scenarios complex. Combine multiple concepts. Include subtle bugs that are easy to miss."
-    elif confidence == "Medium":
-        difficulty_instruction = "Make scenarios moderately complex. Bugs should be identifiable with careful reading."
-    else:
-        difficulty_instruction = "Keep scenarios foundational. Bugs should be clear once you know the concept."
-
-    prompt = f"""You are a senior Cloud/DevOps engineer writing technical interview scenarios.
-
-Topic: {label}
-Entry type: {entry_type}
-Candidate confidence: {confidence}
-
-Source material:
-{json.dumps(entry, indent=2)}
-
-Generate exactly 3 scenario-based interview questions using this material.
-Use a mix of these types: {types_to_use}
-{difficulty_instruction}
-
-Each scenario must follow this EXACT format with no deviation:
-
-SCENARIO: [what_does_this_do|whats_wrong|fix_it|architecture]
-SETUP:
-<2-4 sentences setting the scene. e.g. "You are reviewing a Lambda function that processes S3 events...">
-CODE_OR_CONFIG:
-<the actual code, YAML, policy, or architecture description — make it realistic and specific to the topic>
-QUESTION:
-<the specific question being asked>
-ANSWER:
-<thorough explanation of the correct answer, including why common wrong answers are wrong>
----
-
-Repeat for each of the 3 scenarios. Separate with ---
-Do not include any text before the first SCENARIO or after the last ANSWER."""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
-
-def parse_scenarios(text):
-    scenarios = []
-    blocks = text.strip().split("---")
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-        s = {}
-        for field in ["SCENARIO", "SETUP", "CODE_OR_CONFIG", "QUESTION", "ANSWER"]:
-            start = block.find(f"{field}:")
-            if start == -1:
-                continue
-            end = len(block)
-            for next_field in ["SCENARIO", "SETUP", "CODE_OR_CONFIG", "QUESTION", "ANSWER"]:
-                nf_pos = block.find(f"{next_field}:", start + len(field) + 1)
-                if nf_pos != -1 and nf_pos < end:
-                    end = nf_pos
-            s[field.lower()] = block[start + len(field) + 1:end].strip()
-        if "question" in s and "answer" in s:
-            scenarios.append(s)
-    return scenarios
-
-def load_scenario_cards():
-    path = "output/scenarios.json"
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    cards = []
-    for i, s in enumerate(data):
-        cards.append({
-            "id": i,
-            "type": s.get("scenario", "unknown"),
-            "setup": s.get("setup", ""),
-            "code": s.get("code_or_config", ""),
-            "question": s.get("question", ""),
-            "answer": s.get("answer", ""),
-            "topic": s.get("topic", ""),
-            "confidence": s.get("confidence", ""),
-            "status": "pending"
-        })
-    return cards
-
-
-# Mock interview logic
-
-def score_answer(question, code_or_config, correct_answer, user_answer, topic):
-    prompt = f"""You are a senior Cloud/DevOps engineer grading a technical interview answer.
-
-Topic: {topic}
-
-Question asked:
-{question}
-
-Code/config shown (if any):
-{code_or_config or "N/A"}
-
-Correct answer:
-{correct_answer}
-
-Candidate answer:
-{user_answer}
-
-Grade the candidate answer and return ONLY a JSON object, no markdown:
-{{
-  "score": <0-10 integer>,
-  "verdict": "Strong|Acceptable|Needs Work|Incorrect",
-  "what_they_got_right": "specific things correct in their answer, or empty string",
-  "what_they_missed": "key concepts or details missing, or empty string",
-  "coaching_note": "one concrete thing to study or remember"
-}}"""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
-
-def build_interview_pool(n=8):
-    import random
-    pool = []
-
-    # Load scenarios
-    scenario_path = "output/scenarios.json"
-    if os.path.exists(scenario_path):
-        with open(scenario_path, "r", encoding="utf-8") as f:
-            scenarios = json.load(f)
-        for s in scenarios:
-            pool.append({
-                "source": "scenario",
-                "type": s.get("scenario", "whats_wrong"),
-                "topic": s.get("topic", ""),
-                "confidence": s.get("confidence", "Low"),
-                "setup": s.get("setup", ""),
-                "code": s.get("code_or_config", ""),
-                "question": s.get("question", ""),
-                "answer": s.get("answer", "")
-            })
-
-    # Load flashcards
-    anki_path = "output/anki.csv"
-    if os.path.exists(anki_path):
-        with open(anki_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split("\t")
-                if len(parts) >= 2:
-                    pool.append({
-                        "source": "flashcard",
-                        "type": "recall",
-                        "topic": parts[2].split("::")[-1] if len(parts) > 2 else "",
-                        "confidence": parts[4].strip() if len(parts) > 4 else "Low",
-                        "setup": "",
-                        "code": "",
-                        "question": parts[0],
-                        "answer": parts[1]
-                    })
-
-    if not pool:
-        return []
-
-    # Bias toward Low/Medium confidence
-    weighted = []
-    for item in pool:
-        weight = 3 if item["confidence"] == "Low" else 2 if item["confidence"] == "Medium" else 1
-        weighted.extend([item] * weight)
-
-    random.shuffle(weighted)
-    seen = set()
-    selected = []
-    for item in weighted:
-        key = item["question"][:60]
-        if key not in seen:
-            seen.add(key)
-            selected.append(item)
-        if len(selected) >= n:
-            break
-
-    return selected
 
 # UI
 
@@ -606,6 +45,29 @@ with tab1:
     if uploaded_files:
         st.success(f"{len(uploaded_files)} file(s) ready")
 
+    if uploaded_files:
+        if st.button("Check Note Quality", key="quality_check"):
+            st.markdown("#### Pre-flight quality check")
+            all_good = True
+            for f in uploaded_files:
+                text = f.read().decode("utf-8", errors="ignore")
+                result = check_note_quality(f.name, text)
+                score = result["score"]
+                color = "green" if score >= 8 else "orange" if score >= 5 else "red"
+                with st.expander(f"{f.name} -- Quality score: {score}/10"):
+                    if result["passes"]:
+                        for p in result["passes"]:
+                            st.markdown(f"- {p}")
+                    if result["issues"]:
+                        all_good = False
+                        st.markdown("**Issues to fix:**")
+                        for issue in result["issues"]:
+                            st.warning(issue)
+            if all_good:
+                st.success("All notes passed quality check -- ready to convert")
+            else:
+                st.info("Fix issues above for better scenario and flashcard output. You can still convert as-is.")
+
     if st.button("Run Convert", disabled=not uploaded_files):
         all_notes = ""
         os.makedirs("raw", exist_ok=True)
@@ -626,6 +88,28 @@ with tab1:
                     st.warning(f"Unknown type: {w.get('type')} -- {w.get('source')}")
 
                 st.success(f"Saved {len(parsed)} entries to data/structured.json")
+
+                # Post-convert quality scoring
+                scores = [score_kb_entry(e) for e in parsed]
+                low_quality = [s for s in scores if s["score"] < 6]
+                avg_score = sum(s["score"] for s in scores) / len(scores) if scores else 0
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Entries converted", len(parsed))
+                col2.metric("Avg quality score", f"{avg_score:.1f}/10")
+                col3.metric("Need enrichment", len(low_quality))
+
+                if low_quality:
+                    st.markdown("#### Entries that need enrichment")
+                    st.caption("These entries will generate weaker flashcards and scenarios. Go back and add more detail to the source notes.")
+                    for s in low_quality:
+                        with st.expander(f"[{s['type']}] {s['label']} -- {s['score']}/10"):
+                            st.markdown("**Missing:**")
+                            for issue in s["issues"]:
+                                st.warning(issue)
+                else:
+                    st.success("All entries scored 6/10 or above -- good note quality")
+
                 st.json(parsed[:3])
 
                 os.makedirs("archive", exist_ok=True)
@@ -731,6 +215,14 @@ with tab2:
         elif gen_mode == "Scenario Questions":
             st.caption("Generates code review, debug, fix-it, and architecture scenarios from your knowledge base entries")
 
+            scenario_mode = st.radio("Scenario mode", ["Single file", "Multi-file (cross-file interaction)", "Both"], horizontal=True, key="scenario_mode")
+            if scenario_mode == "Single file":
+                st.caption("Standard scenarios — one code/config snippet per question")
+            elif scenario_mode == "Multi-file (cross-file interaction)":
+                st.caption("2-3 related files per scenario — tests understanding of how components interact across file boundaries")
+            else:
+                st.caption("Mix of single-file and multi-file scenarios")
+
             if st.button("Run Generate -- Scenarios", disabled=not entries_to_run):
                 os.makedirs("output", exist_ok=True)
                 all_scenarios = []
@@ -745,22 +237,40 @@ with tab2:
                     status.text(f"Generating scenarios [{confidence}] {entry_type} -- {label}...")
 
                     try:
-                        raw = generate_scenarios(entry)
-                        parsed = parse_scenarios(raw)
-                        for s in parsed:
-                            s["topic"] = label
-                            s["confidence"] = confidence
-                            s["entry_type"] = entry_type
-                            all_scenarios.append(s)
-
+                        scenario_mode = st.session_state.get("scenario_mode", "Both")
                         md_output += f"\n\n## {entry_type.upper()} -- {label} [{confidence}]\n\n"
-                        for s in parsed:
-                            md_output += f"### [{s.get('scenario','').upper()}]\n"
-                            md_output += f"**Setup:** {s.get('setup','')}\n\n"
-                            if s.get("code_or_config"):
-                                md_output += f"```\n{s.get('code_or_config','')}\n```\n\n"
-                            md_output += f"**Question:** {s.get('question','')}\n\n"
-                            md_output += f"**Answer:** {s.get('answer','')}\n\n---\n\n"
+
+                        if scenario_mode in ["Single file", "Both"]:
+                            raw = generate_scenarios(entry)
+                            parsed = parse_scenarios(raw)
+                            for s in parsed:
+                                s["topic"] = label
+                                s["confidence"] = confidence
+                                s["entry_type"] = entry_type
+                                all_scenarios.append(s)
+                            for s in parsed:
+                                md_output += f"### [{s.get('scenario','').upper()}]\n"
+                                md_output += f"**Setup:** {s.get('setup','')}\n\n"
+                                if s.get("code_or_config"):
+                                    md_output += f"```\n{s.get('code_or_config','')}\n```\n\n"
+                                md_output += f"**Question:** {s.get('question','')}\n\n"
+                                md_output += f"**Answer:** {s.get('answer','')}\n\n---\n\n"
+
+                        if scenario_mode in ["Multi-file (cross-file interaction)", "Both"]:
+                            raw_mf = generate_multifile_scenarios(entry)
+                            parsed_mf = parse_multifile_scenarios(raw_mf)
+                            for s in parsed_mf:
+                                s["topic"] = label
+                                s["confidence"] = confidence
+                                s["entry_type"] = entry_type
+                                all_scenarios.append(s)
+                            for s in parsed_mf:
+                                md_output += f"### [MULTI-FILE]\n"
+                                md_output += f"**Setup:** {s.get('setup','')}\n\n"
+                                for fi, f in enumerate(s.get("files", [])):
+                                    md_output += f"**{f.get('name', f'File {fi+1}')}**\n```\n{f.get('content','')}\n```\n\n"
+                                md_output += f"**Question:** {s.get('question','')}\n\n"
+                                md_output += f"**Answer:** {s.get('answer','')}\n\n---\n\n"
 
                     except Exception as e:
                         st.warning(f"Skipped entry {i}: {e}")
@@ -840,7 +350,11 @@ with tab2:
                     if q.get("setup"):
                         st.markdown("**Setup**")
                         st.info(q["setup"])
-                    if q.get("code"):
+                    if q.get("files"):
+                        for fi, f in enumerate(q["files"]):
+                            st.markdown(f"**File {fi+1}: `{f.get('name', f'file_{fi+1}')}`**")
+                            st.code(f.get("content", ""), language="python" if f.get("name","").endswith(".py") else None)
+                    elif q.get("code"):
                         st.markdown("**Code / Config**")
                         st.code(q["code"])
 
@@ -1020,12 +534,17 @@ with tab3:
         if idx < total:
             card = cards[idx]
             if card.get("setup"):
-                # Scenario card
-                st.markdown(f"**Scenario {idx + 1} of {total}** -- type: `{card.get('type','')}` | topic: `{card.get('topic','')}` | confidence: `{card.get('confidence','')}`")
+                is_multi = card.get("type") == "multi_file" or bool(card.get("files"))
+                label = "Multi-File Scenario" if is_multi else "Scenario"
+                st.markdown(f"**{label} {idx + 1} of {total}** -- type: `{card.get('type','')}` | topic: `{card.get('topic','')}` | confidence: `{card.get('confidence','')}`")
                 st.markdown("---")
                 st.markdown("**Setup**")
                 st.info(card["setup"])
-                if card.get("code"):
+                if is_multi and card.get("files"):
+                    for fi, f in enumerate(card["files"]):
+                        st.markdown(f"**File {fi+1}: `{f.get('name', f'file_{fi+1}')}`**")
+                        st.code(f.get("content", ""), language="python" if f.get("name","").endswith(".py") else None)
+                elif card.get("code"):
                     st.markdown("**Code / Config**")
                     st.code(card["code"])
                 st.markdown("**Question**")
@@ -1292,6 +811,64 @@ with tab6:
                                 st.markdown(f"**Why now:** {item['reason']}")
                                 st.code(item["suggested_note_prompt"], language=None)
                                 st.caption("Paste the above into your raw notes to get started")
+                                col1, col2 = st.columns([1, 3])
+                                with col1:
+                                    if st.button("Cold test me on this", key=f"cold_{item['topic']}"):
+                                        with st.spinner(f"Generating questions on {item['topic']}..."):
+                                            try:
+                                                raw = generate_cold_test_questions(
+                                                    item["topic"],
+                                                    item["market_frequency"],
+                                                    "High"
+                                                )
+                                                from pipeline.generate import parse_qa
+                                                cards = parse_qa(raw)
+                                                if cards:
+                                                    st.session_state["cold_test_cards"] = [
+                                                        {"question": q, "answer": a, "topic": item["topic"]}
+                                                        for q, a in cards
+                                                    ]
+                                                    st.session_state["cold_test_idx"] = 0
+                                                    st.session_state["cold_test_show"] = False
+                                                    st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Error: {e}")
+                                with col2:
+                                    st.caption("No notes needed -- tests what you actually know right now")
+
+                    # Cold test inline runner
+                    if st.session_state.get("cold_test_cards"):
+                        cards = st.session_state["cold_test_cards"]
+                        idx = st.session_state.get("cold_test_idx", 0)
+                        total = len(cards)
+                        if idx < total:
+                            card = cards[idx]
+                            st.markdown("---")
+                            st.markdown(f"#### Cold Test: {card['topic']} -- Question {idx+1} of {total}")
+                            st.info(card["question"])
+                            if st.session_state.get("cold_test_show"):
+                                st.success(card["answer"])
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("Next", key=f"cold_next_{idx}"):
+                                        st.session_state["cold_test_idx"] += 1
+                                        st.session_state["cold_test_show"] = False
+                                        st.rerun()
+                                with col2:
+                                    if st.button("End test", key=f"cold_end_{idx}"):
+                                        st.session_state["cold_test_cards"] = []
+                                        st.session_state["cold_test_idx"] = 0
+                                        st.rerun()
+                            else:
+                                if st.button("Show answer", key=f"cold_show_{idx}"):
+                                    st.session_state["cold_test_show"] = True
+                                    st.rerun()
+                        else:
+                            st.success("Cold test complete -- if you struggled, add notes on this topic and run Convert")
+                            if st.button("Clear test"):
+                                st.session_state["cold_test_cards"] = []
+                                st.session_state["cold_test_idx"] = 0
+                                st.rerun()
 
                     if suggestions.get("weak_but_in_demand"):
                         st.markdown("#### In your notes but needs work -- high market demand")
@@ -1300,6 +877,30 @@ with tab6:
                             with st.expander(f"{item['topic']} -- {item['current_confidence']} confidence | {freq_pct}% of JDs"):
                                 st.markdown(f"**Why prioritize:** {item['reason']}")
                                 st.code(item["suggested_note_prompt"], language=None)
+                                col1, col2 = st.columns([1, 3])
+                                with col1:
+                                    if st.button("Cold test me on this", key=f"weak_{item['topic']}"):
+                                        with st.spinner(f"Generating questions on {item['topic']}..."):
+                                            try:
+                                                raw = generate_cold_test_questions(
+                                                    item["topic"],
+                                                    item["market_frequency"],
+                                                    item.get("urgency", "Medium")
+                                                )
+                                                from pipeline.generate import parse_qa
+                                                cards = parse_qa(raw)
+                                                if cards:
+                                                    st.session_state["cold_test_cards"] = [
+                                                        {"question": q, "answer": a, "topic": item["topic"]}
+                                                        for q, a in cards
+                                                    ]
+                                                    st.session_state["cold_test_idx"] = 0
+                                                    st.session_state["cold_test_show"] = False
+                                                    st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Error: {e}")
+                                with col2:
+                                    st.caption("Tests your current knowledge before committing to a full study session")
 
                     if suggestions.get("emerging_to_watch"):
                         st.markdown("#### Emerging -- worth watching")
@@ -1340,5 +941,10 @@ with tab7:
             conf = entry.get("confidence", "Low")
             conf_label = "High" if conf == "High" else "Med" if conf == "Medium" else "Low"
             label = entry.get("topic") or entry.get("concept") or entry.get("tool") or entry.get("error", "entry")
-            with st.expander(f"[{conf_label}] [{entry.get('type', '?')}] {label}"):
+            qs = score_kb_entry(entry)
+            q_score = qs["score"]
+            q_indicator = "★" * min(q_score // 2, 5) + "☆" * (5 - min(q_score // 2, 5))
+            with st.expander(f"[{conf_label}] [{entry.get('type', '?')}] {label}  |  quality: {q_indicator} {q_score}/10"):
+                if qs["issues"]:
+                    st.caption("Enrichment suggestions: " + " | ".join(qs["issues"]))
                 st.json(entry)
