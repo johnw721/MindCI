@@ -5,19 +5,19 @@ import shutil
 from datetime import datetime
 from anthropic import Anthropic
 
-from config import VALID_TYPES, JD_SKILL_FREQUENCIES
+from config import VALID_TYPES, JD_SKILL_FREQUENCIES, _FREQ_SOURCE, _FREQ_COUNT, load_jd_frequencies
 from utils import (
     load_knowledge_base, load_prompt,
     load_anki_cards, load_scenario_cards, save_reviewed_cards
 )
-from pipeline.convert import convert_to_json, parse_and_save_json
-from pipeline.generate import build_dynamic_prompt, parse_qa, classify
+from pipeline.convert import convert_to_json, parse_and_save_json, list_kb_versions
+from pipeline.generate import build_dynamic_prompt, parse_qa, classify, generate_flashcards_batched
 from pipeline.scenarios import (
     generate_scenarios, parse_scenarios,
     generate_multifile_scenarios, parse_multifile_scenarios
 )
 from pipeline.interview import score_answer, build_interview_pool, append_session, get_summary_stats, get_topic_progression
-from pipeline.jd_analyzer import run_gap_analysis, run_batch_analysis, parse_jds
+from pipeline.jd_analyzer import run_gap_analysis, run_batch_analysis, parse_jds, save_jd_report, trigger_aggregation
 from pipeline.weekly import generate_weekly_plan
 from pipeline.suggestions import generate_topic_suggestions, generate_cold_test_questions
 from pipeline.quality import check_note_quality, score_kb_entry, generate_enrichment_questions, rewrite_enriched_note
@@ -174,7 +174,11 @@ with tab1:
                                    key="enrich_download")
 
     if st.button("Run Convert", disabled=not uploaded_files):
-        all_notes = ""
+        if st.session_state.get("_convert_running"):
+            st.warning("Convert already in progress -- wait for it to finish.")
+        else:
+            st.session_state["_convert_running"] = True
+            all_notes = ""
         os.makedirs("raw", exist_ok=True)
 
         for f in uploaded_files:
@@ -186,11 +190,17 @@ with tab1:
         with st.spinner("Converting notes with Claude..."):
             try:
                 raw_response = convert_to_json(all_notes)
-                parsed = parse_and_save_json(raw_response)
+                parsed, val_report = parse_and_save_json(raw_response)
 
-                VALID_TYPES = {"project", "certification", "exploration"}
-                for w in [e for e in parsed if e.get("type") not in VALID_TYPES]:
-                    st.warning(f"Unknown type: {w.get('type')} -- {w.get('source')}")
+                # Validation results
+                if val_report["invalid_count"] > 0:
+                    st.warning(f"{val_report['invalid_count']} entries failed validation -- saved to data/invalid_entries.json")
+                    for inv in val_report["invalid"]:
+                        st.error(f"[{inv.get('label','?')}] {' | '.join(inv['errors'])}")
+                if val_report["warning_count"] > 0:
+                    with st.expander(f"{val_report['warning_count']} entries have defaulted fields"):
+                        for w in val_report["warnings"]:
+                            st.caption(f"{w['label']}: {', '.join(w['warnings'])}")
 
                 st.success(f"Saved {len(parsed)} entries to data/structured.json")
 
@@ -217,6 +227,14 @@ with tab1:
 
                 st.json(parsed[:3])
 
+                # Show KB version history
+                versions = list_kb_versions()
+                if len(versions) > 1:
+                    st.caption(f"KB version saved to data/history/ -- {len(versions)} version(s) stored")
+                    with st.expander("View KB version history"):
+                        for v in versions[:5]:
+                            st.markdown(f"- `{v}`")
+
                 os.makedirs("archive", exist_ok=True)
                 for f in uploaded_files:
                     src = f"raw/{f.name}"
@@ -224,8 +242,17 @@ with tab1:
                     if os.path.exists(src):
                         shutil.move(src, dst)
                 st.info("Raw files archived")
+                st.session_state["_convert_running"] = False
+
+                # Show version history
+                versions = list_kb_versions()
+                if versions:
+                    with st.expander(f"Knowledge base history ({len(versions)} versions)"):
+                        for v in versions[:10]:
+                            st.caption(v)
 
             except Exception as e:
+                st.session_state["_convert_running"] = False
                 st.error(f"Error: {e}")
 
 # Tab 2: Generate
@@ -786,6 +813,14 @@ with tab4:
                         os.makedirs("output", exist_ok=True)
                         with open("output/jd_report.json", "w", encoding="utf-8") as f:
                             json.dump(result, f, indent=2)
+
+                        saved_path = save_jd_report(result, prefix="single")
+                        report_count = trigger_aggregation()
+                        if report_count >= 3:
+                            st.caption(f"Market frequencies updated from {report_count} JD reports")
+                        else:
+                            st.caption(f"JD report saved ({report_count}/3 needed to activate live frequencies)")
+
                         with open("output/jd_report.json", "rb") as f:
                             st.download_button("Download full report", f, file_name="jd_report.json")
 
@@ -849,6 +884,13 @@ with tab4:
                         os.makedirs("output", exist_ok=True)
                         with open("output/batch_report.json", "w", encoding="utf-8") as f:
                             json.dump(batch_result, f, indent=2)
+
+                        save_jd_report(batch_result, prefix="batch")
+                        report_count = trigger_aggregation()
+                        if report_count >= 3:
+                            st.caption(f"Market frequencies updated from {report_count} JD reports")
+                        else:
+                            st.caption(f"Batch report saved ({report_count}/3 needed to activate live frequencies)")
 
                         # Save top gaps as jd_report so Weekly Plan can use it
                         if agg["most_common_gaps"]:
@@ -929,12 +971,18 @@ with tab6:
     else:
         jd_report = None
         jd_report_path = "output/jd_report.json"
+        # Reload frequencies in case new reports were added this session
+        current_freqs, freq_source, freq_count = load_jd_frequencies()
+
         if os.path.exists(jd_report_path):
             with open(jd_report_path, "r", encoding="utf-8") as f:
                 jd_report = json.load(f)
-            st.caption("JD report detected -- suggestions will factor in your active role gaps")
+            st.caption(f"JD report detected -- suggestions factoring in role gaps | frequency source: {freq_source}")
         else:
-            st.caption("No JD report found -- suggestions based on market frequency only")
+            st.caption(f"No JD report found -- market frequency source: {freq_source}")
+
+        if freq_count < 3 and freq_count > 0:
+            st.info(f"Run {3 - freq_count} more JD analysis to activate live market frequencies. Using baseline data until then.")
 
         if st.button("Generate Suggestions"):
             with st.spinner("Analyzing your knowledge gaps against market demand..."):

@@ -109,3 +109,30 @@ def parse_jds(text):
     parts = re.split(r"(?m)^---+\s*$", text.strip())
     jds = [p.strip() for p in parts if len(p.strip()) > 100]
     return jds if len(jds) > 1 else [text.strip()]
+
+
+JD_REPORTS_DIR = "jd_reports"
+
+
+def save_jd_report(report, prefix="single"):
+    """Save individual JD report to jd_reports/ for frequency aggregation."""
+    from datetime import datetime
+    import os
+    os.makedirs(JD_REPORTS_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    path = os.path.join(JD_REPORTS_DIR, f"{prefix}_{timestamp}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    return path
+
+
+def trigger_aggregation():
+    """Run aggregation script after saving a new report."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from aggregate_jd_frequencies import run_aggregation
+        result, count = run_aggregation()
+        return count
+    except Exception:
+        return 0
