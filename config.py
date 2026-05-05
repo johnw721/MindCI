@@ -1,5 +1,60 @@
+"""
+config.py
+
+Single source of truth for environment + paths.
+- Fails fast if required env vars are missing
+- All paths are env-var-overridable for container deployments
+- Logging goes to stdout (no file handlers) so container runtimes capture it
+"""
+
 import json
+import logging
 import os
+import sys
+
+
+# ── Logging to stdout (container-friendly) ────────────────────────────────────
+logging.basicConfig(
+    level=os.environ.get("MINDCI_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+log = logging.getLogger("mindci")
+
+
+# ── Fail-fast env validation ──────────────────────────────────────────────────
+REQUIRED_ENV = ["ANTHROPIC_API_KEY"]
+
+
+def _validate_env():
+    missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+    if missing:
+        msg = (
+            f"Missing required environment variable(s): {', '.join(missing)}. "
+            "Set them in .env (local) or via docker-compose / your container "
+            "platform before launching MindCI."
+        )
+        # In Streamlit dev mode importing config repeatedly should still raise.
+        log.error(msg)
+        raise RuntimeError(msg)
+
+
+# Skip validation when explicitly running tooling that doesn't need the key
+# (e.g. py_compile, unit tests). Set MINDCI_SKIP_ENV_CHECK=1 to bypass.
+if not os.environ.get("MINDCI_SKIP_ENV_CHECK"):
+    _validate_env()
+
+
+# ── Configurable paths (all env-overridable) ──────────────────────────────────
+DATA_DIR        = os.environ.get("MINDCI_DATA_DIR",       "data")
+OUTPUT_DIR      = os.environ.get("MINDCI_OUTPUT_DIR",     "output")
+RAW_DIR         = os.environ.get("MINDCI_RAW_DIR",        "raw")
+JD_REPORTS_DIR  = os.environ.get("MINDCI_JD_REPORTS_DIR", "jd_reports")
+
+for d in (DATA_DIR, OUTPUT_DIR, RAW_DIR, JD_REPORTS_DIR):
+    os.makedirs(d, exist_ok=True)
+
 
 # Fallback hardcoded frequencies used until enough JD reports are accumulated
 _FALLBACK_FREQUENCIES = {
@@ -11,7 +66,7 @@ _FALLBACK_FREQUENCIES = {
     "AIOps": 0.40, "MLOps": 0.35, "Cost Optimization": 0.48, "SRE practices": 0.55
 }
 
-MARKET_FREQUENCIES_PATH = "data/market_frequencies.json"
+MARKET_FREQUENCIES_PATH = os.path.join(DATA_DIR, "market_frequencies.json")
 MIN_REPORTS_FOR_LIVE_DATA = 3  # use live data only after this many reports
 
 

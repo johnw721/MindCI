@@ -1,0 +1,34 @@
+# VCS / IDE
+.git
+.gitignore
+.vscode
+*.code-workspace
+
+# Python noise
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache
+.mypy_cache
+
+# Local secrets and runtime data — mounted as volumes, never baked into image
+.env
+data/structured.json
+data/history
+data/market_frequencies.json
+raw
+output
+jd_reports
+archive
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Docker assets (don't recurse into themselves)
+Dockerfile
+docker-compose.yml
+.dockerignore

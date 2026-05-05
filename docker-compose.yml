@@ -1,0 +1,29 @@
+services:
+  mindci:
+    build: .
+    image: mindci:latest
+    container_name: mindci
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      # Required — passed through from host shell or .env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      # Paths inside the container (match volumes below)
+      MINDCI_DATA_DIR: /app/data
+      MINDCI_OUTPUT_DIR: /app/output
+      MINDCI_RAW_DIR: /app/raw
+      MINDCI_JD_REPORTS_DIR: /app/jd_reports
+      MINDCI_LOG_LEVEL: ${MINDCI_LOG_LEVEL:-INFO}
+    volumes:
+      # Persist generated content on the host so it survives rebuilds.
+      - ./data:/app/data
+      - ./raw:/app/raw
+      - ./output:/app/output
+      - ./jd_reports:/app/jd_reports
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
