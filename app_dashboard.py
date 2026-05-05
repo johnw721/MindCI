@@ -1,15 +1,20 @@
 """
 app_dashboard.py — Dashboard-first UI for MindCI.
 
-Replaces the 7-tab layout with:
-  • Sidebar nav (Dashboard + quick actions)
-  • Two-column dashboard with readiness, weak spots, recent scores,
-    today's focus, and a market signal block.
-  • Convert / Generate / Card Review / JD Analyzer rendered as dialogs
-    (st.dialog when available) or conditional sections.
+Sidebar nav:
+  • Dashboard          — readiness, weak spots, recent scores, market signal
+  • Mock Interview     — full session runner (start → answer → grade → end)
+  • Knowledge Base     — filterable viewer with inline quality scores
+  • Weekly Plan        — render existing plan + generate new one from last JD report
+  • Topic Suggestions  — structured market-aware suggestions + cold-test buttons
 
-Backend pipeline functions are reused unchanged. To run:
+Quick-action modals (st.dialog):
+  • New Note (Convert) — quality check, live preview, enrichment assistant, commit
+  • Generate           — flashcards (batched), scenarios, multi-file scenarios
+  • Card Review        — flip / approve / reject / skip for flashcards or scenarios
+  • JD Analyzer        — single or batch gap analysis, save report, trigger aggregation
 
+Run:
     streamlit run app_dashboard.py
 """
 
@@ -20,7 +25,7 @@ from pathlib import Path
 
 import streamlit as st
 
-# ── Project imports (unchanged backend) ───────────────────────────────────────
+# ── Project imports ───────────────────────────────────────────────────────────
 from config import (
     JD_SKILL_FREQUENCIES, _FREQ_SOURCE, _FREQ_COUNT,
     DATA_DIR, OUTPUT_DIR, RAW_DIR,
@@ -39,13 +44,22 @@ from pipeline.quality import (
 from pipeline.generate import (
     build_dynamic_prompt, parse_qa, classify, generate_flashcards_batched,
 )
+from pipeline.scenarios import (
+    generate_scenarios, parse_scenarios,
+    generate_multifile_scenarios, parse_multifile_scenarios,
+)
 from pipeline.interview import (
     build_interview_pool, score_answer, append_session,
     get_summary_stats,
 )
 from pipeline.jd_analyzer import (
-    run_gap_analysis, parse_jds, save_jd_report, trigger_aggregation,
+    run_gap_analysis, run_batch_analysis, parse_jds,
+    save_jd_report, trigger_aggregation,
 )
+from pipeline.suggestions import (
+    generate_topic_suggestions, generate_cold_test_questions,
+)
+from pipeline.weekly import generate_weekly_plan
 from validation import validate_entries
 
 
@@ -59,13 +73,11 @@ st.set_page_config(
 
 
 # ── st.dialog compatibility shim ──────────────────────────────────────────────
-# st.dialog is experimental — fall back to a plain container if unavailable.
 def _dialog_decorator(title):
     if hasattr(st, "dialog"):
         return st.dialog(title)
     if hasattr(st, "experimental_dialog"):
         return st.experimental_dialog(title)
-    # Fallback: render as expander inline.
     def _wrap(fn):
         def _inner(*a, **kw):
             with st.expander(title, expanded=True):
@@ -77,14 +89,40 @@ def _dialog_decorator(title):
 # ── Session-state defaults ────────────────────────────────────────────────────
 def _init_state():
     defaults = {
-        "active_modal": None,           # "convert" | "generate" | "review" | "jd"
+        # Modal switching
+        "active_modal": None,           # convert | generate | review | jd
+        # Convert modal
         "convert_text": "",
         "convert_filename": "",
         "convert_preview": None,
         "convert_quality": None,
-        "convert_validation": None,
+        "convert_enrich_questions": None,
+        "convert_enrich_answers": [],
+        "convert_enrich_rewritten": None,
+        # Generate modal
+        "gen_mode": "Flashcards",
+        # Card Review modal
+        "review_kind": "Flashcards",
+        "review_cards": [],
+        "review_idx": 0,
+        "review_show_answer": False,
+        # JD modal
         "jd_text": "",
+        "jd_mode": "Single",
         "jd_result": None,
+        "jd_batch_result": None,
+        # Mock interview view
+        "iv_active": False,
+        "iv_pool": [],
+        "iv_idx": 0,
+        "iv_answer": "",
+        "iv_graded": None,
+        "iv_scores": [],
+        # Topic suggestions
+        "suggestions_data": None,
+        "cold_test_results": {},        # topic → Q/A text
+        # Weekly plan
+        "weekly_hours": 8,
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -105,17 +143,26 @@ def load_recent_weekly_plan():
     return None
 
 
+def load_last_jd_report():
+    p = Path(OUTPUT_DIR) / "jd_report.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def market_signal_top(n=8):
-    items = sorted(JD_SKILL_FREQUENCIES.items(), key=lambda x: -x[1])[:n]
-    return items
+    return sorted(JD_SKILL_FREQUENCIES.items(), key=lambda x: -x[1])[:n]
 
 
 def quality_color(score):
     if score >= 8:
-        return "#22c55e"   # green
+        return "#22c55e"
     if score >= 5:
-        return "#f59e0b"   # amber
-    return "#ef4444"       # red
+        return "#f59e0b"
+    return "#ef4444"
 
 
 def quality_badge(score, label="quality"):
@@ -128,6 +175,20 @@ def quality_badge(score, label="quality"):
     )
 
 
+def render_scenario_card(card):
+    """Shared renderer for scenario cards (single or multi-file)."""
+    if card.get("setup"):
+        st.markdown(f"**Setup:** {card['setup']}")
+    if card.get("files"):
+        for f in card["files"]:
+            st.markdown(f"**`{f.get('name', 'file')}`**")
+            st.code(f.get("content", ""), language="text")
+    elif card.get("code"):
+        st.code(card["code"], language="text")
+    if card.get("question"):
+        st.markdown(f"**Q:** {card['question']}")
+
+
 # ── Sidebar navigation ────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🧠 MindCI")
@@ -135,7 +196,8 @@ with st.sidebar:
 
     nav = st.radio(
         "View",
-        ["Dashboard", "Knowledge Base", "Weekly Plan", "Topic Suggestions"],
+        ["Dashboard", "Mock Interview", "Knowledge Base",
+         "Weekly Plan", "Topic Suggestions"],
         label_visibility="collapsed",
     )
 
@@ -143,18 +205,20 @@ with st.sidebar:
     st.markdown("### Quick actions")
     if st.button("📝 New Note (Convert)", use_container_width=True):
         st.session_state.active_modal = "convert"
-    if st.button("🎯 JD Analyzer", use_container_width=True):
-        st.session_state.active_modal = "jd"
-    if st.button("🃏 Card Review", use_container_width=True):
-        st.session_state.active_modal = "review"
     if st.button("⚡ Generate", use_container_width=True):
         st.session_state.active_modal = "generate"
+    if st.button("🃏 Card Review", use_container_width=True):
+        st.session_state.active_modal = "review"
+    if st.button("🎯 JD Analyzer", use_container_width=True):
+        st.session_state.active_modal = "jd"
 
     st.markdown("---")
     st.caption(f"Market data: {_FREQ_SOURCE}")
 
 
-# ── Dashboard view ────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Dashboard view
+# ══════════════════════════════════════════════════════════════════════════════
 def render_dashboard():
     st.title("Dashboard")
     kb = load_kb_safe()
@@ -167,15 +231,14 @@ def render_dashboard():
         st.markdown("#### Readiness")
         if stats:
             score = stats["overall_avg"]
-            score10 = round(score, 1)
             quality_badge(int(round(score)), "readiness")
             st.metric(
                 "Overall avg score",
-                f"{score10}/10",
+                f"{round(score, 1)}/10",
                 delta=f"{stats['total_sessions']} sessions",
             )
         else:
-            st.info("No mock interview history yet — run a Card Review session to seed this.")
+            st.info("No mock interview history yet — start a Mock Interview from the sidebar to seed this.")
 
         st.markdown("#### Weak spots")
         if stats and stats["weak_spots"]:
@@ -218,60 +281,346 @@ def render_dashboard():
     cols[3].metric("JD reports", _FREQ_COUNT)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Mock Interview view (multi-step, full-page, persistent across reruns)
+# ══════════════════════════════════════════════════════════════════════════════
+def render_mock_interview():
+    st.title("Mock Interview")
+    stats = get_summary_stats()
+
+    # Header stats line
+    if stats:
+        cols = st.columns(4)
+        cols[0].metric("Sessions", stats["total_sessions"])
+        cols[1].metric("Questions answered", stats["total_questions"])
+        cols[2].metric("Overall avg", f"{stats['overall_avg']}/10")
+        cols[3].metric("Weak spots", len(stats["weak_spots"]))
+
+    # ── Start screen ─────────────────────────────────────────────────────────
+    if not st.session_state.iv_active:
+        st.markdown("#### Start a new session")
+        n = st.slider("How many questions?", 3, 15, 8)
+        if st.button("Build pool & start", type="primary"):
+            with st.spinner("Building question pool…"):
+                pool = build_interview_pool(n)
+            if not pool:
+                st.error("Pool is empty — generate flashcards or scenarios first.")
+                return
+            st.session_state.iv_pool = pool[:n]
+            st.session_state.iv_idx = 0
+            st.session_state.iv_scores = []
+            st.session_state.iv_answer = ""
+            st.session_state.iv_graded = None
+            st.session_state.iv_active = True
+            st.rerun()
+        return
+
+    # ── Active session ───────────────────────────────────────────────────────
+    idx = st.session_state.iv_idx
+    pool = st.session_state.iv_pool
+
+    if idx < len(pool):
+        q = pool[idx]
+        progress = (idx) / len(pool)
+        st.progress(progress, text=f"Question {idx+1} of {len(pool)}")
+
+        st.markdown(f"##### Question {idx+1} of {len(pool)} — `{q.get('topic', '?')}` [{q['type']}]")
+        if q.get("setup"):
+            st.markdown(f"**Setup:** {q['setup']}")
+        if q.get("files"):
+            for f in q["files"]:
+                st.markdown(f"**`{f.get('name','file')}`**")
+                st.code(f.get("content",""), language="text")
+        elif q.get("code"):
+            st.code(q["code"], language="text")
+        st.markdown(f"**Q:** {q['question']}")
+
+        if st.session_state.iv_graded is None:
+            user_ans = st.text_area(
+                "Your answer",
+                value=st.session_state.iv_answer,
+                key=f"iv_ans_{idx}",
+                height=160,
+            )
+            st.session_state.iv_answer = user_ans
+            cols = st.columns(3)
+            with cols[0]:
+                if st.button("Submit answer", type="primary"):
+                    with st.spinner("Grading…"):
+                        try:
+                            grade = score_answer(
+                                q["question"], q.get("code", ""),
+                                q["answer"], user_ans, q.get("topic", ""),
+                            )
+                            st.session_state.iv_graded = grade
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Grading failed: {e}")
+            with cols[1]:
+                if st.button("Skip"):
+                    st.session_state.iv_scores.append({
+                        "score": 0, "verdict": "Skipped",
+                        "topic": q.get("topic", ""), "type": q["type"],
+                    })
+                    st.session_state.iv_idx += 1
+                    st.session_state.iv_answer = ""
+                    st.session_state.iv_graded = None
+                    st.rerun()
+            with cols[2]:
+                if st.button("End session early"):
+                    st.session_state.iv_idx = len(pool)
+                    st.rerun()
+        else:
+            grade = st.session_state.iv_graded
+            verdict = grade.get("verdict", "")
+            st.markdown(f"**Verdict:** {verdict} — **{grade['score']}/10**")
+            st.markdown("**Your answer**")
+            st.write(st.session_state.iv_answer)
+            if grade.get("what_they_got_right"):
+                st.success(f"What you got right: {grade['what_they_got_right']}")
+            if grade.get("what_they_missed"):
+                st.warning(f"What you missed: {grade['what_they_missed']}")
+            if grade.get("coaching_note"):
+                st.info(f"Coaching note: {grade['coaching_note']}")
+            with st.expander("Model answer"):
+                st.markdown(q["answer"])
+
+            if st.button("Next →", type="primary"):
+                st.session_state.iv_scores.append({
+                    "score": grade["score"],
+                    "verdict": grade["verdict"],
+                    "topic": q.get("topic", ""),
+                    "type": q["type"],
+                    "coaching_note": grade.get("coaching_note", ""),
+                })
+                st.session_state.iv_idx += 1
+                st.session_state.iv_answer = ""
+                st.session_state.iv_graded = None
+                st.rerun()
+        return
+
+    # ── End screen ───────────────────────────────────────────────────────────
+    scores = st.session_state.iv_scores
+    if not scores:
+        st.warning("Session ended with no answers recorded.")
+        if st.button("New session"):
+            st.session_state.iv_active = False
+            st.rerun()
+        return
+
+    total = sum(s["score"] for s in scores)
+    max_total = len(scores) * 10
+    pct = int((total / max_total) * 100) if max_total else 0
+    st.success(f"Session complete — {total}/{max_total} ({pct}%)")
+    st.progress(pct / 100)
+
+    verdict_counts = {}
+    for s in scores:
+        verdict_counts[s["verdict"]] = verdict_counts.get(s["verdict"], 0) + 1
+    if verdict_counts:
+        cols = st.columns(len(verdict_counts))
+        for i, (v, c) in enumerate(verdict_counts.items()):
+            cols[i].metric(v, c)
+
+    st.markdown("#### Question breakdown")
+    for i, s in enumerate(scores):
+        bar = "█" * s["score"] + "░" * (10 - s["score"])
+        st.markdown(
+            f"**Q{i+1}** `{s['topic']}` [{s['type']}] — {s['score']}/10 [{bar}] {s['verdict']}"
+        )
+        if s.get("coaching_note") and s["verdict"] not in ("Strong", "Skipped"):
+            st.caption(f"    Remember: {s['coaching_note']}")
+
+    weak = [s for s in scores if s["verdict"] in ("Needs Work", "Incorrect", "Skipped")]
+    if weak:
+        st.markdown("#### Focus areas for next session")
+        for s in weak:
+            st.markdown(f"- **{s['topic']}** ({s['type']})")
+
+    # Persist report
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    report = {
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "total_score": total,
+        "max_score": max_total,
+        "pct": pct,
+        "questions": scores,
+    }
+    with open(Path(OUTPUT_DIR) / "interview_report.json", "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    append_session(report)
+
+    if st.button("New session", type="primary"):
+        st.session_state.iv_active = False
+        st.session_state.iv_pool = []
+        st.session_state.iv_idx = 0
+        st.session_state.iv_scores = []
+        st.session_state.iv_answer = ""
+        st.session_state.iv_graded = None
+        st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Knowledge Base view (with inline quality scores)
+# ══════════════════════════════════════════════════════════════════════════════
 def render_knowledge_base():
     st.title("Knowledge Base")
     kb = load_kb_safe()
     if not kb:
         st.info("No entries yet. Use **New Note (Convert)** to add some.")
         return
+
+    # Filters
+    cols = st.columns(2)
+    type_filter = cols[0].multiselect(
+        "Type", options=sorted({e.get("type", "?") for e in kb}),
+    )
+    conf_filter = cols[1].multiselect(
+        "Confidence", options=["Low", "Medium", "High"],
+    )
+    filtered = kb
+    if type_filter:
+        filtered = [e for e in filtered if e.get("type") in type_filter]
+    if conf_filter:
+        filtered = [e for e in filtered if e.get("confidence") in conf_filter]
+
+    st.caption(f"{len(filtered)} of {len(kb)} entries")
+
     by_type = {}
-    for e in kb:
+    for e in filtered:
         by_type.setdefault(e.get("type", "?"), []).append(e)
+
     for t, entries in by_type.items():
         st.markdown(f"### {t.title()} ({len(entries)})")
         for e in entries:
             label = (e.get("topic") or e.get("concept") or
                      e.get("tool") or e.get("error", "—"))
-            with st.expander(f"{label}  ·  conf {e.get('confidence', '?')}"):
+            q = score_kb_entry(e)
+            with st.expander(f"{label}  ·  conf {e.get('confidence', '?')}  ·  quality {q['score']}/10"):
+                quality_badge(q["score"])
+                if q["issues"]:
+                    st.warning("Enrichment suggestions: " + "; ".join(q["issues"]))
                 st.json(e)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Weekly Plan view (render existing + generate new)
+# ══════════════════════════════════════════════════════════════════════════════
 def render_weekly_plan():
     st.title("Weekly Plan")
     plan = load_recent_weekly_plan()
+    last_jd = load_last_jd_report()
+
     if plan:
         st.markdown(plan)
-    else:
-        st.info("Generate one from the JD Analyzer modal after a gap analysis.")
+        st.markdown("---")
 
-
-def render_topic_suggestions():
-    st.title("Topic Suggestions")
-    from pipeline.suggestions import generate_topic_suggestions
-    kb = load_kb_safe()
-    if not kb:
-        st.info("Need at least one KB entry.")
+    st.markdown("#### Generate a new plan")
+    if not last_jd:
+        st.info("Run a JD gap analysis first — the weekly plan needs your last JD report's priority gaps.")
         return
-    if st.button("Generate suggestions"):
+
+    role = last_jd.get("role_title") or (last_jd.get("aggregate", {}) or {}).get("best_fit_role") or "Cloud Engineer"
+    gaps = last_jd.get("priority_gaps") or []
+    if not gaps and last_jd.get("aggregate"):
+        # Fall back to batch aggregate gaps when running off batch results
+        gaps = [
+            {"domain": g["skill"], "urgency": g.get("urgency", "Medium"), "action": "Close this market-frequent gap."}
+            for g in last_jd["aggregate"].get("most_common_gaps", [])[:2]
+        ]
+    if not gaps:
+        st.warning("Last JD report has no priority gaps to plan against.")
+        return
+
+    st.caption(f"Target role: **{role}** · top gaps: " + ", ".join(g["domain"] for g in gaps[:2]))
+    hours = st.slider("Available study hours this week",
+                      4, 30, st.session_state.weekly_hours, key="weekly_hours_slider")
+    st.session_state.weekly_hours = hours
+
+    if st.button("Generate weekly plan", type="primary"):
         with st.spinner("Asking Claude…"):
             try:
-                out = generate_topic_suggestions(kb)
-                st.markdown(out)
+                text = generate_weekly_plan(gaps, role, hours)
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                Path(OUTPUT_DIR, "weekly_plan.md").write_text(text, encoding="utf-8")
+                st.success("Saved to output/weekly_plan.md")
+                st.markdown(text)
             except Exception as e:
                 st.error(f"Error: {e}")
 
 
-# ── Modals ────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Topic Suggestions view (structured + cold test)
+# ══════════════════════════════════════════════════════════════════════════════
+def render_topic_suggestions():
+    st.title("Topic Suggestions")
+    st.caption(f"Active frequency source: **{_FREQ_SOURCE}**")
 
+    kb = load_kb_safe()
+    if not kb:
+        st.info("Need at least one KB entry.")
+        return
+
+    last_jd = load_last_jd_report()
+
+    if st.button("Generate suggestions", type="primary"):
+        with st.spinner("Comparing your KB against market demand…"):
+            try:
+                st.session_state.suggestions_data = generate_topic_suggestions(kb, last_jd)
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    data = st.session_state.suggestions_data
+    if not data:
+        return
+
+    if data.get("summary"):
+        st.markdown(f"_{data['summary']}_")
+
+    def _section(title, items, freq_key="market_frequency"):
+        if not items:
+            return
+        st.markdown(f"#### {title}")
+        for item in items:
+            topic = item.get("topic", "?")
+            freq = item.get(freq_key)
+            header = f"**{topic}**"
+            if freq is not None:
+                header += f" · market freq {int(freq*100)}%"
+            if item.get("current_confidence"):
+                header += f" · current conf {item['current_confidence']}"
+            st.markdown(header)
+            if item.get("reason"):
+                st.caption(item["reason"])
+            if item.get("suggested_note_prompt"):
+                with st.expander("Suggested note prompt"):
+                    st.code(item["suggested_note_prompt"], language="text")
+
+            cold_key = f"cold__{topic}"
+            if st.button("Cold test", key=cold_key):
+                with st.spinner(f"Generating 3 cold-test questions for {topic}…"):
+                    try:
+                        urgency = "High" if (freq or 0) >= 0.65 else "Medium"
+                        out = generate_cold_test_questions(topic, freq or 0, urgency)
+                        st.session_state.cold_test_results[topic] = out
+                    except Exception as e:
+                        st.error(f"Cold test failed: {e}")
+            if topic in st.session_state.cold_test_results:
+                with st.expander(f"Cold test for {topic}"):
+                    st.markdown(st.session_state.cold_test_results[topic])
+            st.markdown("---")
+
+    _section("Uncovered, high demand", data.get("uncovered_high_demand", []))
+    _section("In your notes but weak", data.get("weak_but_in_demand", []))
+    _section("Emerging — worth watching", data.get("emerging_to_watch", []),
+             freq_key=None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Modal: Convert (with enrichment assistant)
+# ══════════════════════════════════════════════════════════════════════════════
 @_dialog_decorator("📝 New Note — Convert")
 def modal_convert():
-    """
-    Convert modal with:
-      • Marker cheat sheet (sticky at top)
-      • Live preview of fields Claude will extract
-      • Coloured quality badge
-      • Inline Pydantic validation errors before commit
-    """
     st.markdown("##### Cognitive Payload Markers — drop these into your note")
     st.code(CPM_CHEAT_SHEET, language="text")
 
@@ -288,19 +637,21 @@ def modal_convert():
         st.session_state.convert_filename = uploaded.name
     st.session_state.convert_text = text
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     with cols[0]:
-        do_quality = st.button("Quality check", key="modal_convert_qcheck")
+        do_quality = st.button("Quality check", key="m_conv_q")
     with cols[1]:
-        do_preview = st.button("Preview extraction", key="modal_convert_preview")
+        do_preview = st.button("Preview extraction", key="m_conv_p")
     with cols[2]:
-        do_commit = st.button("Convert & save", type="primary",
-                              key="modal_convert_commit")
+        do_enrich = st.button("Enrichment assistant", key="m_conv_e")
+    with cols[3]:
+        do_commit = st.button("Convert & save", type="primary", key="m_conv_c")
 
-    # ── Quality badge ─────────────────────────────────────────────────────
+    # Quality
     if do_quality and text.strip():
-        q = check_note_quality(st.session_state.convert_filename or "note.txt", text)
-        st.session_state.convert_quality = q
+        st.session_state.convert_quality = check_note_quality(
+            st.session_state.convert_filename or "note.txt", text
+        )
     if st.session_state.convert_quality:
         q = st.session_state.convert_quality
         quality_badge(q["score"])
@@ -313,7 +664,7 @@ def modal_convert():
                 for p in q["passes"]:
                     st.markdown(f"- {p}")
 
-    # ── Live preview ──────────────────────────────────────────────────────
+    # Preview
     if do_preview and text.strip():
         with st.spinner("Previewing fields Claude would extract…"):
             try:
@@ -331,8 +682,6 @@ def modal_convert():
             st.warning("Likely missing/weak: " + ", ".join(prev["missing"]))
         if prev.get("detected_markers"):
             st.caption("Detected markers: " + " ".join(prev["detected_markers"]))
-
-        # Inline Pydantic validation BEFORE commit
         candidate = {"type": prev.get("type", ""), **prev.get("fields", {})}
         _, invalid, warnings = validate_entries([candidate])
         if invalid:
@@ -345,7 +694,49 @@ def modal_convert():
                 for w in warnings:
                     st.caption(", ".join(w["warnings"]))
 
-    # ── Commit (real convert) ─────────────────────────────────────────────
+    # Enrichment assistant
+    if do_enrich and text.strip():
+        with st.spinner("Asking Claude what's missing…"):
+            try:
+                qs = generate_enrichment_questions(text)
+                st.session_state.convert_enrich_questions = qs
+                st.session_state.convert_enrich_answers = ["" for _ in qs]
+                st.session_state.convert_enrich_rewritten = None
+            except Exception as e:
+                st.error(f"Enrichment failed: {e}")
+
+    if st.session_state.convert_enrich_questions:
+        st.markdown("##### Enrichment questions")
+        answers = list(st.session_state.convert_enrich_answers)
+        for i, q in enumerate(st.session_state.convert_enrich_questions):
+            answers[i] = st.text_area(
+                f"Q{i+1}: {q}", value=answers[i], height=80, key=f"m_enrich_{i}",
+            )
+        st.session_state.convert_enrich_answers = answers
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Rewrite note", key="m_conv_rewrite"):
+                with st.spinner("Rewriting…"):
+                    try:
+                        st.session_state.convert_enrich_rewritten = rewrite_enriched_note(
+                            text,
+                            st.session_state.convert_enrich_questions,
+                            answers,
+                        )
+                    except Exception as e:
+                        st.error(f"Rewrite failed: {e}")
+        if st.session_state.convert_enrich_rewritten:
+            st.markdown("##### Rewritten note")
+            st.code(st.session_state.convert_enrich_rewritten, language="text")
+            with c2:
+                if st.button("Use rewritten as new note text", key="m_conv_use_rewrite"):
+                    st.session_state.convert_text = st.session_state.convert_enrich_rewritten
+                    st.session_state.convert_enrich_questions = None
+                    st.session_state.convert_enrich_answers = []
+                    st.session_state.convert_enrich_rewritten = None
+                    st.rerun()
+
+    # Commit
     if do_commit and text.strip():
         os.makedirs(RAW_DIR, exist_ok=True)
         fname = st.session_state.convert_filename or f"note_{datetime.now():%Y%m%d_%H%M%S}.txt"
@@ -361,79 +752,266 @@ def modal_convert():
                     with st.expander(f"{report['warning_count']} soft warnings"):
                         for w in report["warnings"]:
                             st.caption(f"{w['label']}: {', '.join(w['warnings'])}")
-                # Reset preview
                 st.session_state.convert_preview = None
                 st.session_state.convert_quality = None
             except Exception as e:
                 st.error(f"Convert failed: {e}")
 
-    if st.button("Close", key="modal_convert_close"):
+    if st.button("Close", key="m_conv_close"):
         st.session_state.active_modal = None
         st.rerun()
 
 
-@_dialog_decorator("⚡ Generate flashcards & scenarios")
+# ══════════════════════════════════════════════════════════════════════════════
+# Modal: Generate (flashcards / scenarios / multi-file scenarios)
+# ══════════════════════════════════════════════════════════════════════════════
+@_dialog_decorator("⚡ Generate")
 def modal_generate():
     kb = load_kb_safe()
     if not kb:
         st.info("Convert a note first.")
-    else:
-        st.write(f"{len(kb)} entries in KB.")
-        if st.button("Generate flashcards (batched)", type="primary"):
-            with st.spinner("Generating…"):
+        if st.button("Close", key="m_gen_close_empty"):
+            st.session_state.active_modal = None
+            st.rerun()
+        return
+
+    st.write(f"{len(kb)} entries in KB.")
+    mode = st.radio(
+        "Mode", ["Flashcards", "Scenarios (single file)", "Scenarios (multi-file)"],
+        horizontal=True, key="modal_gen_mode",
+    )
+
+    # Filters
+    c1, c2 = st.columns(2)
+    type_pick = c1.multiselect(
+        "Filter by type", sorted({e.get("type", "?") for e in kb}),
+    )
+    conf_pick = c2.multiselect(
+        "Filter by confidence", ["Low", "Medium", "High"],
+    )
+    pool = kb
+    if type_pick:
+        pool = [e for e in pool if e.get("type") in type_pick]
+    if conf_pick:
+        pool = [e for e in pool if e.get("confidence") in conf_pick]
+
+    st.caption(f"{len(pool)} entries match.")
+
+    if mode == "Flashcards":
+        if st.button("Generate flashcards (batched)", type="primary", key="m_gen_run_fc"):
+            with st.spinner("Generating flashcards…"):
                 try:
-                    cards = generate_flashcards_batched(kb)
+                    cards = generate_flashcards_batched(pool)
                     st.success(f"Generated {len(cards)} flashcards.")
                 except Exception as e:
                     st.error(f"Error: {e}")
-    if st.button("Close", key="modal_gen_close"):
+
+    elif mode == "Scenarios (single file)":
+        if st.button("Generate scenarios", type="primary", key="m_gen_run_sc"):
+            all_scenarios = []
+            with st.spinner("Generating scenarios…"):
+                for entry in pool:
+                    try:
+                        raw = generate_scenarios(entry)
+                        parsed = parse_scenarios(raw)
+                        for p in parsed:
+                            label = (entry.get("topic") or entry.get("concept")
+                                     or entry.get("tool") or entry.get("error", "—"))
+                            p["topic"] = label
+                            p["confidence"] = entry.get("confidence", "Low")
+                        all_scenarios.extend(parsed)
+                    except Exception as e:
+                        st.warning(f"Skipped one entry: {e}")
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            out_path = Path(OUTPUT_DIR) / "scenarios.json"
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(all_scenarios, f, indent=2)
+            st.success(f"Saved {len(all_scenarios)} scenarios to {out_path}")
+
+    else:  # Multi-file
+        if st.button("Generate multi-file scenarios", type="primary", key="m_gen_run_mf"):
+            all_scenarios = []
+            with st.spinner("Generating multi-file scenarios…"):
+                for entry in pool:
+                    try:
+                        raw = generate_multifile_scenarios(entry)
+                        parsed = parse_multifile_scenarios(raw)
+                        for p in parsed:
+                            label = (entry.get("topic") or entry.get("concept")
+                                     or entry.get("tool") or entry.get("error", "—"))
+                            p["topic"] = label
+                            p["confidence"] = entry.get("confidence", "Low")
+                        all_scenarios.extend(parsed)
+                    except Exception as e:
+                        st.warning(f"Skipped one entry: {e}")
+            # Append to existing scenarios.json so multi-file and single-file can coexist
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            out_path = Path(OUTPUT_DIR) / "scenarios.json"
+            existing = []
+            if out_path.exists():
+                try:
+                    existing = json.loads(out_path.read_text(encoding="utf-8"))
+                except Exception:
+                    existing = []
+            combined = existing + all_scenarios
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(combined, f, indent=2)
+            st.success(f"Added {len(all_scenarios)} multi-file scenarios (total {len(combined)})")
+
+    if st.button("Close", key="m_gen_close"):
         st.session_state.active_modal = None
         st.rerun()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Modal: Card Review (full approve / reject / skip flow)
+# ══════════════════════════════════════════════════════════════════════════════
 @_dialog_decorator("🃏 Card Review")
 def modal_review():
-    cards = load_anki_cards()
+    kind = st.radio(
+        "Review", ["Flashcards", "Scenarios"],
+        horizontal=True, key="modal_review_kind",
+    )
+
+    # Reload when kind changes
+    if kind != st.session_state.review_kind:
+        st.session_state.review_kind = kind
+        st.session_state.review_cards = []
+        st.session_state.review_idx = 0
+        st.session_state.review_show_answer = False
+
+    if st.button("Load cards", key="m_rev_load"):
+        st.session_state.review_cards = (
+            load_anki_cards() if kind == "Flashcards" else load_scenario_cards()
+        )
+        st.session_state.review_idx = 0
+        st.session_state.review_show_answer = False
+
+    cards = st.session_state.review_cards
     if not cards:
-        st.info("No flashcards yet — run Generate first.")
+        st.info(f"No {kind.lower()} loaded. Click **Load cards** above.")
+        if st.button("Close", key="m_rev_close_empty"):
+            st.session_state.active_modal = None
+            st.rerun()
+        return
+
+    pending = [c for c in cards if c["status"] == "pending"]
+    idx = st.session_state.review_idx
+    if idx >= len(pending):
+        approved = sum(1 for c in cards if c["status"] == "approved")
+        rejected = sum(1 for c in cards if c["status"] == "rejected")
+        skipped = sum(1 for c in cards if c["status"] == "skipped")
+        st.success(f"All cards reviewed — {approved} approved, {rejected} rejected, {skipped} skipped.")
+        if kind == "Flashcards":
+            a, r = save_reviewed_cards(cards)
+            st.caption(f"Saved → output/anki.csv ({a}) & output/anki_rejected.csv ({r}).")
+        if st.button("Close", key="m_rev_close_done"):
+            st.session_state.active_modal = None
+            st.rerun()
+        return
+
+    card = pending[idx]
+    st.progress((idx) / max(len(pending), 1),
+                text=f"{idx+1} of {len(pending)} pending")
+
+    if kind == "Flashcards":
+        st.markdown(f"**Q:** {card['question']}")
+        if st.session_state.review_show_answer:
+            st.markdown(f"**A:** {card['answer']}")
+            st.caption(f"tags={card['tags']} · diff={card['difficulty']} · conf={card['confidence']}")
+        else:
+            if st.button("Flip", key="m_rev_flip"):
+                st.session_state.review_show_answer = True
+                st.rerun()
     else:
-        st.write(f"{len(cards)} flashcards.")
-        for c in cards[:10]:
-            with st.expander(c["question"][:80]):
-                st.markdown(f"**A:** {c['answer']}")
-                st.caption(f"tags={c['tags']} · diff={c['difficulty']} · conf={c['confidence']}")
-    if st.button("Close", key="modal_review_close"):
+        render_scenario_card(card)
+        if st.session_state.review_show_answer:
+            st.markdown(f"**Model answer:** {card['answer']}")
+            st.caption(f"topic={card.get('topic','—')} · conf={card.get('confidence','—')}")
+        else:
+            if st.button("Show answer", key="m_rev_flip"):
+                st.session_state.review_show_answer = True
+                st.rerun()
+
+    cols = st.columns(3)
+    with cols[0]:
+        if st.button("✅ Approve", key="m_rev_approve"):
+            card["status"] = "approved"
+            st.session_state.review_idx += 1
+            st.session_state.review_show_answer = False
+            st.rerun()
+    with cols[1]:
+        if st.button("❌ Reject", key="m_rev_reject"):
+            card["status"] = "rejected"
+            st.session_state.review_idx += 1
+            st.session_state.review_show_answer = False
+            st.rerun()
+    with cols[2]:
+        if st.button("⏭ Skip", key="m_rev_skip"):
+            card["status"] = "skipped"
+            st.session_state.review_idx += 1
+            st.session_state.review_show_answer = False
+            st.rerun()
+
+    if st.button("Close", key="m_rev_close"):
         st.session_state.active_modal = None
         st.rerun()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Modal: JD Analyzer (single + batch)
+# ══════════════════════════════════════════════════════════════════════════════
 @_dialog_decorator("🎯 JD Analyzer")
 def modal_jd():
     kb = load_kb_safe()
     if not kb:
         st.info("Need a KB before running gap analysis.")
-        if st.button("Close", key="modal_jd_close_empty"):
+        if st.button("Close", key="m_jd_close_empty"):
             st.session_state.active_modal = None
             st.rerun()
         return
 
+    mode = st.radio("Mode", ["Single", "Batch"],
+                    horizontal=True, key="modal_jd_mode")
+    st.session_state.jd_mode = mode
+
     st.session_state.jd_text = st.text_area(
-        "Paste a job description (or several separated by `---`)",
+        "Paste JD text" if mode == "Single"
+        else "Paste multiple JDs separated by `---` (or upload a .txt below)",
         value=st.session_state.jd_text,
-        height=200,
-        key="modal_jd_text",
+        height=220,
+        key="modal_jd_textarea",
     )
-    if st.button("Run gap analysis", type="primary", key="modal_jd_run"):
+    if mode == "Batch":
+        up = st.file_uploader("…or upload .txt", type="txt", key="m_jd_up")
+        if up is not None:
+            st.session_state.jd_text = up.read().decode("utf-8", errors="ignore")
+
+    run_label = "Run gap analysis" if mode == "Single" else "Run batch analysis"
+    if st.button(run_label, type="primary", key="m_jd_run"):
         with st.spinner("Analyzing…"):
             try:
-                jds = parse_jds(st.session_state.jd_text)
-                result = run_gap_analysis(jds[0], kb)
-                st.session_state.jd_result = result
-                save_jd_report(result, prefix="single")
-                trigger_aggregation()
+                if mode == "Single":
+                    jds = parse_jds(st.session_state.jd_text)
+                    result = run_gap_analysis(jds[0], kb)
+                    st.session_state.jd_result = result
+                    st.session_state.jd_batch_result = None
+                    save_jd_report(result, prefix="single")
+                    trigger_aggregation()
+                else:
+                    jds = parse_jds(st.session_state.jd_text)
+                    if len(jds) < 2:
+                        st.warning("Couldn't split into multiple JDs — use `---` separators.")
+                    else:
+                        batch = run_batch_analysis(jds, kb)
+                        st.session_state.jd_batch_result = batch
+                        st.session_state.jd_result = None
+                        save_jd_report(batch, prefix="batch")
+                        trigger_aggregation()
             except Exception as e:
                 st.error(f"Error: {e}")
 
+    # ── Single result rendering ──────────────────────────────────────────────
     if st.session_state.jd_result:
         r = st.session_state.jd_result
         quality_badge(int(round(r.get("readiness_score", 0) / 10)), "readiness")
@@ -443,15 +1021,46 @@ def modal_jd():
             st.markdown("##### Priority gaps")
             for g in r["priority_gaps"]:
                 st.markdown(f"- **{g['domain']}** ({g['urgency']}) — {g['action']}")
+        if r.get("strengths"):
+            st.markdown("##### Strengths to lead with")
+            for s in r["strengths"]:
+                st.markdown(f"- {s}")
 
-    if st.button("Close", key="modal_jd_close"):
+    # ── Batch result rendering ───────────────────────────────────────────────
+    if st.session_state.jd_batch_result:
+        b = st.session_state.jd_batch_result
+        agg = b.get("aggregate", {}) or {}
+        st.markdown("##### Aggregate")
+        if agg.get("avg_readiness_score") is not None:
+            quality_badge(int(round(agg["avg_readiness_score"] / 10)), "avg readiness")
+        if agg.get("best_fit_role"):
+            st.caption(f"Best-fit role: {agg['best_fit_role']}")
+        if agg.get("summary"):
+            st.markdown(agg["summary"])
+        if agg.get("most_common_gaps"):
+            st.markdown("**Most common gaps**")
+            for g in agg["most_common_gaps"]:
+                st.markdown(f"- **{g['skill']}** — appears in {g['appears_in']} JDs · {g.get('urgency','')}")
+        if agg.get("consistent_strengths"):
+            st.markdown("**Consistent strengths:** " + ", ".join(agg["consistent_strengths"]))
+        st.markdown("##### Per-JD")
+        for r in b.get("individual_results", []):
+            with st.expander(f"JD {r['jd_number']}: {r.get('role_title','?')} — {r.get('readiness_score',0)}/100"):
+                st.markdown(f"Top gaps: {', '.join(r.get('top_gaps', []))}")
+                st.markdown(f"Top strengths: {', '.join(r.get('top_strengths', []))}")
+
+    if st.button("Close", key="m_jd_close"):
         st.session_state.active_modal = None
         st.rerun()
 
 
-# ── Main render ───────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Main render dispatch
+# ══════════════════════════════════════════════════════════════════════════════
 if nav == "Dashboard":
     render_dashboard()
+elif nav == "Mock Interview":
+    render_mock_interview()
 elif nav == "Knowledge Base":
     render_knowledge_base()
 elif nav == "Weekly Plan":
@@ -459,8 +1068,6 @@ elif nav == "Weekly Plan":
 elif nav == "Topic Suggestions":
     render_topic_suggestions()
 
-# Conditional modal rendering — st.dialog calls render the dialog,
-# the fallback decorator inlines an expander.
 if st.session_state.active_modal == "convert":
     modal_convert()
 elif st.session_state.active_modal == "generate":

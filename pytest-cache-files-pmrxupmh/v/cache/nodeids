@@ -1,0 +1,20 @@
+[
+  "tests/test_config.py::test_baseline_when_no_aggregated_file_exists",
+  "tests/test_config.py::test_blended_below_threshold_merges_live_and_baseline",
+  "tests/test_config.py::test_live_when_at_or_above_threshold",
+  "tests/test_jd_parsing.py::test_dashes_split_multiple_jds",
+  "tests/test_jd_parsing.py::test_short_chunks_are_dropped_below_threshold",
+  "tests/test_jd_parsing.py::test_single_jd_returns_one_element",
+  "tests/test_quality.py::test_detect_entry_type_routes_by_keyword",
+  "tests/test_quality.py::test_rich_note_with_all_signals_scores_high",
+  "tests/test_quality.py::test_score_kb_entry_rewards_detail_in_project_fields",
+  "tests/test_quality.py::test_thin_note_scores_low_and_flags_word_count",
+  "tests/test_scenarios.py::test_parse_multifile_scenarios_captures_files_and_qa",
+  "tests/test_scenarios.py::test_parse_scenarios_extracts_three_blocks",
+  "tests/test_scenarios.py::test_parse_scenarios_skips_blocks_missing_required_fields",
+  "tests/test_validation.py::test_confidence_and_difficulty_are_normalized",
+  "tests/test_validation.py::test_missing_optional_confidence_emits_warning_not_error",
+  "tests/test_validation.py::test_missing_required_field_routes_to_invalid",
+  "tests/test_validation.py::test_unknown_type_is_rejected",
+  "tests/test_validation.py::test_valid_project_entry_round_trips"
+]

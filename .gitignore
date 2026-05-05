@@ -9,6 +9,7 @@ data/history/
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 .vscode/
 Thumbs.db
 desktop.ini
