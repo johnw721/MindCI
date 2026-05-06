@@ -27,41 +27,58 @@ import streamlit as st
 
 # ── Project imports ───────────────────────────────────────────────────────────
 from config import (
-    JD_SKILL_FREQUENCIES, _FREQ_SOURCE, _FREQ_COUNT,
-    DATA_DIR, OUTPUT_DIR, RAW_DIR,
-)
-from utils import (
-    load_knowledge_base, load_anki_cards, load_scenario_cards,
-    save_reviewed_cards,
+    DATA_DIR,
+    OUTPUT_DIR,
+    RAW_DIR,
+    load_jd_frequencies,
 )
 from pipeline.convert import convert_to_json, parse_and_save_json
-from pipeline.quality import (
-    check_note_quality, score_kb_entry,
-    generate_enrichment_questions, rewrite_enriched_note,
-    preview_extraction,
-    CPM_CHEAT_SHEET,
-)
 from pipeline.generate import (
-    build_dynamic_prompt, parse_qa, classify, generate_flashcards_batched,
-)
-from pipeline.scenarios import (
-    generate_scenarios, parse_scenarios,
-    generate_multifile_scenarios, parse_multifile_scenarios,
+    build_dynamic_prompt,
+    classify,
+    generate_flashcards_batched,
+    parse_qa,
 )
 from pipeline.interview import (
-    build_interview_pool, score_answer, append_session,
+    append_session,
+    build_interview_pool,
     get_summary_stats,
+    score_answer,
 )
 from pipeline.jd_analyzer import (
-    run_gap_analysis, run_batch_analysis, parse_jds,
-    save_jd_report, trigger_aggregation,
+    parse_jds,
+    run_batch_analysis,
+    run_gap_analysis,
+    save_jd_report,
+    trigger_aggregation,
+)
+from pipeline.quality import (
+    CPM_CHEAT_SHEET,
+    check_note_quality,
+    generate_enrichment_questions,
+    preview_extraction,
+    rewrite_enriched_note,
+    score_kb_entry,
+)
+from pipeline.scenarios import (
+    generate_multifile_scenarios,
+    generate_scenarios,
+    parse_multifile_scenarios,
+    parse_scenarios,
 )
 from pipeline.suggestions import (
-    generate_topic_suggestions, generate_cold_test_questions,
+    generate_cold_test_questions,
+    generate_topic_suggestions,
 )
 from pipeline.weekly import generate_weekly_plan
+from utils import (
+    load_anki_cards,
+    load_knowledge_base,
+    load_prompt,
+    load_scenario_cards,
+    save_reviewed_cards,
+)
 from validation import validate_entries
-
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -153,8 +170,14 @@ def load_last_jd_report():
         return None
 
 
+def current_freqs():
+    """Re-read JD frequencies on every call so new reports show up live."""
+    return load_jd_frequencies()  # (frequencies_dict, source_label, report_count)
+
+
 def market_signal_top(n=8):
-    return sorted(JD_SKILL_FREQUENCIES.items(), key=lambda x: -x[1])[:n]
+    freqs, _, _ = current_freqs()
+    return sorted(freqs.items(), key=lambda x: -x[1])[:n]
 
 
 def quality_color(score):
@@ -213,7 +236,8 @@ with st.sidebar:
         st.session_state.active_modal = "jd"
 
     st.markdown("---")
-    st.caption(f"Market data: {_FREQ_SOURCE}")
+    _, _sidebar_source, _ = current_freqs()
+    st.caption(f"Market data: {_sidebar_source}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -268,8 +292,9 @@ def render_dashboard():
         else:
             st.caption("Run JD Analyzer → generate a weekly plan to populate this.")
 
+        _, _dash_source, _dash_count = current_freqs()
         st.markdown("#### Market signal")
-        st.caption(f"Top JD-frequency skills ({_FREQ_SOURCE})")
+        st.caption(f"Top JD-frequency skills ({_dash_source})")
         for skill, freq in market_signal_top():
             st.markdown(f"- {skill} — {int(freq*100)}%")
 
@@ -278,7 +303,18 @@ def render_dashboard():
     cols[0].metric("KB entries", len(kb))
     cols[1].metric("Sessions", stats["total_sessions"] if stats else 0)
     cols[2].metric("Questions answered", stats["total_questions"] if stats else 0)
-    cols[3].metric("JD reports", _FREQ_COUNT)
+    cols[3].metric("JD reports", _dash_count)
+
+    # API spend telemetry — recorded per call in pipeline/_client.py
+    from pipeline._client import get_usage_summary
+    usage = get_usage_summary(days=7)
+    st.caption(
+        f"API today: **${usage['today']['cost_usd']:.2f}** "
+        f"({usage['today']['calls']} call{'s' if usage['today']['calls'] != 1 else ''}, "
+        f"{usage['today']['input_tokens'] + usage['today']['output_tokens']:,} tokens) · "
+        f"7-day: **${usage['window']['cost_usd']:.2f}** "
+        f"({usage['window']['calls']} calls)"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -554,7 +590,8 @@ def render_weekly_plan():
 # ══════════════════════════════════════════════════════════════════════════════
 def render_topic_suggestions():
     st.title("Topic Suggestions")
-    st.caption(f"Active frequency source: **{_FREQ_SOURCE}**")
+    _, _ts_source, _ = current_freqs()
+    st.caption(f"Active frequency source: **{_ts_source}**")
 
     kb = load_kb_safe()
     if not kb:
@@ -799,12 +836,45 @@ def modal_generate():
 
     if mode == "Flashcards":
         if st.button("Generate flashcards (batched)", type="primary", key="m_gen_run_fc"):
+            prompts = {
+                "project":       load_prompt("prompts/project.txt"),
+                "certification": load_prompt("prompts/cert.txt"),
+                "exploration":   load_prompt("prompts/explore.txt"),
+            }
+            # Group by type so each batch shares the right base prompt.
+            by_type = {"project": [], "certification": [], "exploration": []}
+            for e in pool:
+                by_type.setdefault(e.get("type", "exploration"), []).append(e)
+
+            md_output = ""
+            anki_rows = []
             with st.spinner("Generating flashcards…"):
-                try:
-                    cards = generate_flashcards_batched(pool)
-                    st.success(f"Generated {len(cards)} flashcards.")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                for entry_type, entries in by_type.items():
+                    if not entries:
+                        continue
+                    base = prompts.get(entry_type, prompts["exploration"])
+                    try:
+                        results = generate_flashcards_batched(entries, base)
+                    except Exception as e:
+                        st.warning(f"{entry_type}: batch failed — {e}")
+                        continue
+                    for entry, cards in results:
+                        tag = classify(entry)
+                        category = entry.get("category", entry.get("tool", "general"))
+                        confidence = entry.get("confidence", "Low")
+                        difficulty = entry.get("difficulty", "")
+                        md_output += f"\n\n## [{tag}] {entry_type.upper()} ({category})\n"
+                        for q, a in cards:
+                            md_output += f"Q: {q}\nA: {a}\n\n"
+                            anki_rows.append((q, a, f"{tag}::{entry_type}::{category}",
+                                              difficulty, confidence))
+
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            Path(OUTPUT_DIR, "questions.md").write_text(md_output, encoding="utf-8")
+            with Path(OUTPUT_DIR, "anki.csv").open("w", encoding="utf-8") as f:
+                for q, a, tags, diff, conf in anki_rows:
+                    f.write(f"{q}\t{a}\t{tags}\t{diff}\t{conf}\n")
+            st.success(f"Generated {len(anki_rows)} flashcards → {OUTPUT_DIR}/anki.csv")
 
     elif mode == "Scenarios (single file)":
         if st.button("Generate scenarios", type="primary", key="m_gen_run_sc"):

@@ -1,36 +1,13 @@
 import json
 import os
 import sys
-import time
 from datetime import datetime
-from anthropic import Anthropic
 
-# Add project root to path for validation import
+# Add project root to path for validation + config imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-client = Anthropic()
-
-MAX_RETRIES = 3
-BACKOFF_BASE = 2  # seconds
-
-
-def _call_with_retry(prompt, max_tokens=4096):
-    """Call Claude API with exponential backoff retry on failure."""
-    last_error = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text
-        except Exception as e:
-            last_error = e
-            if attempt < MAX_RETRIES - 1:
-                wait = BACKOFF_BASE ** attempt
-                time.sleep(wait)
-    raise RuntimeError(f"API call failed after {MAX_RETRIES} attempts: {last_error}")
+from config import DATA_DIR, MAX_TOKENS_GENERATION
+from pipeline._client import call_with_retry
 
 
 def _repair_json(bad_json):
@@ -39,7 +16,7 @@ def _repair_json(bad_json):
 
 MALFORMED JSON:
 {bad_json}"""
-    return _call_with_retry(repair_prompt, max_tokens=4096)
+    return call_with_retry(repair_prompt, max_tokens=MAX_TOKENS_GENERATION)
 
 
 def _strip_fences(text):
@@ -74,7 +51,7 @@ exploration:
 RAW NOTES:
 {raw_text}
 """
-    return _call_with_retry(prompt)
+    return call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
 
 
 def parse_and_save_json(raw_response):
@@ -98,14 +75,15 @@ def parse_and_save_json(raw_response):
     if not isinstance(parsed, list):
         raise ValueError(f"Expected a JSON array, got {type(parsed).__name__}")
 
-    os.makedirs("data", exist_ok=True)
-    os.makedirs("data/history", exist_ok=True)
+    history_dir = os.path.join(DATA_DIR, "history")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(history_dir, exist_ok=True)
 
     # Copy-on-write: version the existing file before overwriting
-    current_path = "data/structured.json"
+    current_path = os.path.join(DATA_DIR, "structured.json")
     if os.path.exists(current_path):
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        versioned_path = f"data/history/structured_{timestamp}.json"
+        versioned_path = os.path.join(history_dir, f"structured_{timestamp}.json")
         with open(current_path, "r", encoding="utf-8") as f:
             existing = f.read()
         with open(versioned_path, "w", encoding="utf-8") as f:
@@ -125,7 +103,7 @@ def parse_and_save_json(raw_response):
 
 def list_kb_versions():
     """Return list of versioned KB files sorted newest first."""
-    history_dir = "data/history"
+    history_dir = os.path.join(DATA_DIR, "history")
     if not os.path.exists(history_dir):
         return []
     files = [f for f in os.listdir(history_dir) if f.startswith("structured_")]

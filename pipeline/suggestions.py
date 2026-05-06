@@ -1,11 +1,13 @@
 import json
 import os
-from anthropic import Anthropic
-client = Anthropic()
 
-from config import JD_SKILL_FREQUENCIES
+from config import MAX_TOKENS_ANALYSIS, load_jd_frequencies
+from pipeline._client import call_with_retry
+
 
 def generate_topic_suggestions(knowledge_base, jd_report=None):
+    # Read frequencies on every call so newly-aggregated reports take effect.
+    freqs, _, _ = load_jd_frequencies()
     kb_summary = [{
         "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
         "confidence": e.get("confidence", "Low"),
@@ -23,7 +25,7 @@ CURRENT KNOWLEDGE BASE:
 {json.dumps(kb_summary, indent=2)}
 
 MARKET SKILL FREQUENCIES (how often skills appear in Cloud Engineer JDs):
-{json.dumps(JD_SKILL_FREQUENCIES, indent=2)}
+{json.dumps(freqs, indent=2)}
 {jd_gap_block}
 
 Analyze the knowledge base against market demand and return ONLY a JSON object, no markdown:
@@ -45,12 +47,8 @@ weak_but_in_demand: topics present but Low confidence AND market_frequency > 0.5
 emerging_to_watch: up to 3 topics gaining traction in Cloud/DevOps not yet in knowledge base
 Limit each list to top 5 items maximum."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_ANALYSIS)
+    raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -60,9 +58,6 @@ Limit each list to top 5 items maximum."""
 
 def generate_cold_test_questions(topic, market_frequency, urgency="High"):
     """Generate test questions for a topic with no notes — purely from topic name and market context."""
-    from anthropic import Anthropic
-    client = Anthropic()
-
     prompt = f"""You are a senior Cloud/DevOps engineer writing interview questions.
 
 Topic: {topic}
@@ -83,9 +78,5 @@ A: thorough answer that teaches if they don't know it
 
 Return ONLY the Q/A pairs, no intro text."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_ANALYSIS)
+    return _text

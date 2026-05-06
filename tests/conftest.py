@@ -32,28 +32,25 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
-# Stub `anthropic.Anthropic` BEFORE any pipeline module is imported.
-# Several modules (notably pipeline/jd_analyzer.py) construct the client at
-# import time. We never want a real network client in the test suite, and on
-# some sandboxed runners constructing the real client even fails (e.g. missing
-# socksio for httpx SOCKS proxy support). The stub raises on actual API calls
-# so any test that accidentally goes to the network fails loudly instead of
-# silently exercising real infrastructure.
+# Stub the lazy Anthropic client so tests never hit the network.
+# Pipeline modules now go through `pipeline._client.get_client()` instead of
+# constructing `Anthropic()` at import time, so we can stub at that single
+# choke point. Any test that accidentally calls `messages.create(...)` fails
+# loudly rather than silently exercising real infrastructure.
+class _StubClient:
+    def __init__(self):
+        self.messages = self
+
+    def create(self, *_, **__):
+        raise RuntimeError(
+            "Real Anthropic API call from a test — mock the call site, "
+            "or move this test out of the smoke-test tier."
+        )
+
+
 try:
-    import anthropic  # type: ignore
-
-    class _StubAnthropic:
-        def __init__(self, *_, **__):
-            self.messages = self
-
-        def create(self, *_, **__):
-            raise RuntimeError(
-                "Real Anthropic API call from a test — mock the call site, "
-                "or move this test out of the smoke-test tier."
-            )
-
-    anthropic.Anthropic = _StubAnthropic  # type: ignore[attr-defined]
+    from pipeline import _client as _pipeline_client  # type: ignore
+    _pipeline_client.get_client = lambda: _StubClient()  # type: ignore[attr-defined]
 except ImportError:
-    # If anthropic isn't installed in this env, modules that import it will
-    # fail on their own — nothing for us to stub.
+    # pipeline package missing — modules that import it will fail on their own.
     pass

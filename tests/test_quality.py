@@ -4,9 +4,9 @@ entry-type detection. No network.
 """
 
 from pipeline.quality import (
+    _detect_entry_type,
     check_note_quality,
     score_kb_entry,
-    _detect_entry_type,
 )
 
 

@@ -3,7 +3,7 @@ Tests for pipeline/scenarios.py — the deterministic parsers. Generation
 functions go to the network and are out of scope for the smoke tier.
 """
 
-from pipeline.scenarios import parse_scenarios, parse_multifile_scenarios
+from pipeline.scenarios import parse_multifile_scenarios, parse_scenarios
 
 
 def test_parse_scenarios_extracts_three_blocks():

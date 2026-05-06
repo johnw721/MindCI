@@ -1,8 +1,8 @@
 import json
 import os
-from anthropic import Anthropic
 
-client = Anthropic()
+from config import MAX_TOKENS_GENERATION
+from pipeline._client import call_with_retry
 
 
 def build_dynamic_prompt(base_prompt, entry):
@@ -129,27 +129,19 @@ def generate_flashcards_batched(entries, base_prompt, batch_size=4):
         batch = entries[i:i + batch_size]
         prompt = _build_batch_prompt(base_prompt, batch)
         try:
-            response = client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = response.content[0].text
+            _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
+            raw = _text
             parsed = _parse_batch_response(raw, len(batch))
             for j, entry in enumerate(batch):
                 results.append((entry, parsed.get(j, [])))
-        except Exception as e:
+        except Exception:
             # Fall back to individual calls for this batch on failure
             for entry in batch:
                 try:
                     single_prompt = build_dynamic_prompt(base_prompt, entry)
-                    response = client.messages.create(
-                        model="claude-sonnet-4-5",
-                        max_tokens=4096,
-                        messages=[{"role": "user", "content": single_prompt}]
-                    )
-                    cards = parse_qa(response.content[0].text)
+                    _text = call_with_retry(single_prompt, max_tokens=MAX_TOKENS_GENERATION)
+                    cards = parse_qa(_text)
                     results.append((entry, cards))
-                except Exception as inner_e:
+                except Exception:
                     results.append((entry, []))
     return results

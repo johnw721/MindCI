@@ -6,11 +6,11 @@ Called after every parse_and_save_json to catch missing or
 malformed fields before downstream stages run.
 """
 
-from pydantic import BaseModel, field_validator, model_validator
-from typing import Optional, Literal
 import json
 import os
+from typing import Literal, Optional
 
+from pydantic import BaseModel, field_validator, model_validator
 
 # ── Confidence / Difficulty enums ─────────────────────────────────────────────
 
@@ -220,20 +220,24 @@ def validate_entries(entries):
     return valid, invalid, warnings
 
 
-def validate_and_save(entries, path="data/structured.json"):
+def validate_and_save(entries, path=None):
     """
     Validate entries, save only valid ones, return validation report.
-    Invalid entries are saved separately to data/invalid_entries.json.
+    Invalid entries are saved separately to <DATA_DIR>/invalid_entries.json.
     """
+    from config import DATA_DIR
+    if path is None:
+        path = os.path.join(DATA_DIR, "structured.json")
     valid, invalid, warnings = validate_entries(entries)
 
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(valid, f, indent=2, ensure_ascii=False)
 
     if invalid:
-        with open("data/invalid_entries.json", "w", encoding="utf-8") as f:
+        invalid_path = os.path.join(DATA_DIR, "invalid_entries.json")
+        with open(invalid_path, "w", encoding="utf-8") as f:
             json.dump(invalid, f, indent=2, ensure_ascii=False)
 
     return {

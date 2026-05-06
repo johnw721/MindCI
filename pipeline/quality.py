@@ -1,6 +1,7 @@
 import os
-from config import QUALITY_SIGNALS, MIN_WORD_COUNT
 
+from config import MAX_TOKENS_GRADE, MAX_TOKENS_REVIEW, MIN_WORD_COUNT, QUALITY_SIGNALS
+from pipeline._client import call_with_retry
 
 # ── Cognitive Payload Markers (CPM) ───────────────────────────────────────────
 # A tiny vocabulary the user (and the enrichment assistant) can sprinkle into
@@ -174,9 +175,7 @@ def generate_enrichment_questions(note_text, entry_type=None):
     Generate 4-5 targeted follow-up questions for a thin note.
     Questions are tailored to the entry type's missing CPM sections.
     """
-    from anthropic import Anthropic
     import json
-    client = Anthropic()
 
     et = entry_type or _detect_entry_type(note_text)
     focus_lines = ENRICHMENT_FOCUS.get(et, ENRICHMENT_FOCUS["project"])
@@ -207,12 +206,8 @@ Focus only on what is genuinely missing -- do not ask about things already cover
 Return ONLY a JSON array of question strings, no markdown, no extra text:
 ["question 1", "question 2", "question 3", "question 4"]"""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GRADE)
+    raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -225,8 +220,6 @@ def rewrite_enriched_note(original_note, questions, answers, entry_type=None):
     Rewrite a thin note into a CPM-marked note. Output preserves and uses
     the marker vocabulary so downstream prompts can rely on it.
     """
-    from anthropic import Anthropic
-    client = Anthropic()
 
     qa_block = "\n".join(
         f"Q: {q}\nA: {a}" for q, a in zip(questions, answers) if a.strip()
@@ -260,12 +253,8 @@ Style: clear plain English between markers. Markers are anchors, not bullet poin
 Do not invent facts not present in the original note or the Q&A.
 Return ONLY the rewritten note text, nothing else."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_REVIEW)
+    return _text.strip()
 
 
 def preview_extraction(note_text):
@@ -274,9 +263,7 @@ def preview_extraction(note_text):
     without saving anything. Used by the Convert tab to show the user a dry
     run before they commit.
     """
-    from anthropic import Anthropic
     import json
-    client = Anthropic()
 
     prompt = f"""You are previewing how a raw note would be converted to a structured KB entry.
 Do NOT invent fields. If a field is unclear, leave it as an empty string.
@@ -297,12 +284,8 @@ Return ONLY a single JSON object (not an array), no markdown:
   "detected_markers": ["#tag1", "→", "🧠", "!"]
 }}"""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_REVIEW)
+    raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

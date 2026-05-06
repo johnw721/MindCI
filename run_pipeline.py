@@ -1,21 +1,16 @@
-import subprocess
+"""
+run_pipeline.py — thin alias kept for backwards compatibility.
 
-def run_step(name, command):
-    print(f"\n🚀 {name}")
-    result = subprocess.run(command, shell=True)
+The real CLI lives in mindci.py. Running this is equivalent to:
 
-    if result.returncode != 0:
-        print(f"❌ Failed: {name}")
-        exit(1)
+    python mindci.py run
 
-    print(f"✅ Done: {name}")
+Delete this file at any time; nothing else imports it.
+"""
 
-def main():
-    run_step("Convert Notes → JSON", "python convert.py")
-    run_step("Generate Questions", "python generate.py")
+import sys
 
-    print("\n🎉 Pipeline complete!")
-    print("→ Check output/questions.md")
+from mindci import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main(["run"] + sys.argv[1:]))

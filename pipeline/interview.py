@@ -1,10 +1,10 @@
 import json
 import os
-from anthropic import Anthropic
-client = Anthropic()
-
 import random
-import os
+
+from config import MAX_TOKENS_GRADE, OUTPUT_DIR
+from pipeline._client import call_with_retry
+
 
 def score_answer(question, code_or_config, correct_answer, user_answer, topic):
     prompt = f"""You are a senior Cloud/DevOps engineer grading a technical interview answer.
@@ -32,12 +32,8 @@ Grade the candidate answer and return ONLY a JSON object, no markdown:
   "coaching_note": "one concrete thing to study or remember"
 }}"""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GRADE)
+    raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -45,11 +41,10 @@ Grade the candidate answer and return ONLY a JSON object, no markdown:
     return json.loads(raw.strip())
 
 def build_interview_pool(n=8):
-    import random
     pool = []
 
     # Load scenarios
-    scenario_path = "output/scenarios.json"
+    scenario_path = os.path.join(OUTPUT_DIR, "scenarios.json")
     if os.path.exists(scenario_path):
         with open(scenario_path, "r", encoding="utf-8") as f:
             scenarios = json.load(f)
@@ -67,7 +62,7 @@ def build_interview_pool(n=8):
             })
 
     # Load flashcards
-    anki_path = "output/anki.csv"
+    anki_path = os.path.join(OUTPUT_DIR, "anki.csv")
     if os.path.exists(anki_path):
         with open(anki_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -107,7 +102,7 @@ def build_interview_pool(n=8):
     return selected
 
 
-HISTORY_PATH = "output/interview_history.json"
+HISTORY_PATH = os.path.join(OUTPUT_DIR, "interview_history.json")
 
 def load_history():
     if not os.path.exists(HISTORY_PATH):
@@ -118,7 +113,7 @@ def load_history():
 def append_session(session_report):
     history = load_history()
     history.append(session_report)
-    os.makedirs("output", exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(HISTORY_PATH, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
 

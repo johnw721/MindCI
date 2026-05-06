@@ -1,7 +1,9 @@
 import json
 import os
-from anthropic import Anthropic
-client = Anthropic()
+
+from config import MAX_TOKENS_GENERATION
+from pipeline._client import call_with_retry
+
 
 def generate_weekly_plan(priority_gaps, role_title, hours_per_week):
     top_gaps = priority_gaps[:2]
@@ -27,9 +29,5 @@ Be specific with days (Day 1, Day 2 etc.) and time estimates per task.
 
 Format clearly with headers for each skill and the weekly plan."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
+    return _text

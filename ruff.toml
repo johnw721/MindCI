@@ -1,0 +1,19 @@
+line-length = 120
+target-version = "py310"
+extend-exclude = ["archive", "data", "output", "raw", "jd_reports", ".venv"]
+
+[lint]
+# Conservative rule set — pyflakes (real bugs) + import sorting + a few style checks.
+# Easy to expand later; keep CI green from day one.
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line length — covered by `line-length` formatter behaviour
+    "E402",  # module-level import not at top (convert.py needs the sys.path hack first)
+    "F401",  # unused imports — pipeline modules re-export some helpers
+    "E731",  # lambda assignment (used for stubbing in tests/conftest.py)
+    "E741",  # ambiguous var names (we use `l` and `i` in tight loops)
+]
+
+[lint.per-file-ignores]
+"tests/*"   = ["F811", "E711"]  # fixture redefinitions, == None comparisons
+"app.py"    = ["F", "E"]         # legacy 7-tab UI; not maintained

@@ -106,7 +106,7 @@ if __name__ == "__main__":
     result, count = run_aggregation()
     if result:
         print(f"Aggregated {count} JD reports")
-        print(f"Top 10 skills by frequency:")
+        print("Top 10 skills by frequency:")
         for skill, freq in list(result["frequencies"].items())[:10]:
             print(f"  {skill}: {int(freq * 100)}%")
         print(f"Saved to {OUTPUT_PATH}")

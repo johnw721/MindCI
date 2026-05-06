@@ -1,9 +1,10 @@
 import json
 import os
-from anthropic import Anthropic
-client = Anthropic()
-
 import re
+
+from config import JD_REPORTS_DIR, MAX_TOKENS_ANALYSIS, MAX_TOKENS_BATCH
+from pipeline._client import call_with_retry
+
 
 def run_gap_analysis(jd_text, knowledge_base):
     kb_summary = [{
@@ -32,12 +33,8 @@ Return ONLY a JSON object, no markdown, no extra text:
   "summary": "2 sentence readiness summary"
 }}"""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_ANALYSIS)
+    raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -92,12 +89,8 @@ most_common_gaps: skills that appear as gaps in 2 or more JDs, sorted by frequen
 consistent_strengths: skills covered across most JDs
 Limit most_common_gaps to top 8."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=3000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_BATCH)
+    raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -105,19 +98,15 @@ Limit most_common_gaps to top 8."""
     return json.loads(raw.strip())
 
 def parse_jds(text):
-    import re
     parts = re.split(r"(?m)^---+\s*$", text.strip())
     jds = [p.strip() for p in parts if len(p.strip()) > 100]
     return jds if len(jds) > 1 else [text.strip()]
 
 
-JD_REPORTS_DIR = "jd_reports"
-
-
 def save_jd_report(report, prefix="single"):
     """Save individual JD report to jd_reports/ for frequency aggregation."""
-    from datetime import datetime
     import os
+    from datetime import datetime
     os.makedirs(JD_REPORTS_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     path = os.path.join(JD_REPORTS_DIR, f"{prefix}_{timestamp}.json")

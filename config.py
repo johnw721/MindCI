@@ -12,7 +12,6 @@ import logging
 import os
 import sys
 
-
 # ── Logging to stdout (container-friendly) ────────────────────────────────────
 logging.basicConfig(
     level=os.environ.get("MINDCI_LOG_LEVEL", "INFO"),
@@ -95,12 +94,30 @@ def load_jd_frequencies():
     return _FALLBACK_FREQUENCIES, "baseline (no JD reports yet)", 0
 
 
-# Module-level load — cached for the session
+# Module-level load — kept as a snapshot for backwards compatibility.
+# Live callers (app_dashboard, suggestions) should call load_jd_frequencies()
+# directly so new JD reports show up without an app restart.
 JD_SKILL_FREQUENCIES, _FREQ_SOURCE, _FREQ_COUNT = load_jd_frequencies()
 
 VALID_TYPES = {"project", "certification", "exploration"}
 
 MIN_WORD_COUNT = 50
+
+# ── Anthropic call configuration (env-overridable) ────────────────────────────
+# One choke point for the model name and a small set of named token caps.
+# Sized to use case so a model upgrade or budget adjustment is one env var.
+MODEL = os.environ.get("MINDCI_MODEL", "claude-sonnet-4-5")
+
+MAX_TOKENS_GRADE      = int(os.environ.get("MINDCI_MAX_TOKENS_GRADE",       512))   # interview grading
+MAX_TOKENS_REVIEW     = int(os.environ.get("MINDCI_MAX_TOKENS_REVIEW",     1024))   # preview, enrichment, rewrite
+MAX_TOKENS_ANALYSIS   = int(os.environ.get("MINDCI_MAX_TOKENS_ANALYSIS",   2048))   # gap analysis, suggestions
+MAX_TOKENS_BATCH      = int(os.environ.get("MINDCI_MAX_TOKENS_BATCH",      3000))   # batch JD analysis
+MAX_TOKENS_GENERATION = int(os.environ.get("MINDCI_MAX_TOKENS_GENERATION", 4096))   # flashcards, scenarios, weekly
+
+# USD per million tokens. Defaults track Claude Sonnet 4.5 list pricing.
+# Override per environment if Anthropic adjusts pricing or you switch models.
+MODEL_INPUT_PRICE_PER_MTOK  = float(os.environ.get("MINDCI_INPUT_PRICE_PER_MTOK",  3.0))
+MODEL_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("MINDCI_OUTPUT_PRICE_PER_MTOK", 15.0))
 
 QUALITY_SIGNALS = {
     "confidence": ["confidence:", "confidence level:", "confidence -"],

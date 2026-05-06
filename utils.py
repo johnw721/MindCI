@@ -3,8 +3,11 @@ import os
 import shutil
 from datetime import datetime
 
+from config import DATA_DIR, OUTPUT_DIR
+
+
 def load_knowledge_base():
-    path = "data/structured.json"
+    path = os.path.join(DATA_DIR, "structured.json")
     if not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -17,7 +20,7 @@ def load_prompt(path):
         return f.read()
 
 def load_anki_cards():
-    path = "output/anki.csv"
+    path = os.path.join(OUTPUT_DIR, "anki.csv")
     if not os.path.exists(path):
         return []
     cards = []
@@ -37,19 +40,19 @@ def load_anki_cards():
     return cards
 
 def save_reviewed_cards(cards):
-    os.makedirs("output", exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     approved = [c for c in cards if c["status"] != "rejected"]
     rejected = [c for c in cards if c["status"] == "rejected"]
-    with open("output/anki.csv", "w", encoding="utf-8") as f:
+    with open(os.path.join(OUTPUT_DIR, "anki.csv"), "w", encoding="utf-8") as f:
         for c in approved:
             f.write(f"{c['question']}\t{c['answer']}\t{c['tags']}\t{c['difficulty']}\t{c['confidence']}\n")
-    with open("output/anki_rejected.csv", "w", encoding="utf-8") as f:
+    with open(os.path.join(OUTPUT_DIR, "anki_rejected.csv"), "w", encoding="utf-8") as f:
         for c in rejected:
             f.write(f"{c['question']}\t{c['answer']}\t{c['tags']}\t{c['difficulty']}\t{c['confidence']}\n")
     return len(approved), len(rejected)
 
 def load_scenario_cards():
-    path = "output/scenarios.json"
+    path = os.path.join(OUTPUT_DIR, "scenarios.json")
     if not os.path.exists(path):
         return []
     with open(path, "r", encoding="utf-8") as f:

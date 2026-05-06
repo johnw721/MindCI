@@ -1,9 +1,9 @@
 import json
 import os
-from anthropic import Anthropic
-client = Anthropic()
-
 import random
+
+from config import MAX_TOKENS_GENERATION, OUTPUT_DIR
+from pipeline._client import call_with_retry
 
 # Scenario generation logic
 
@@ -64,12 +64,8 @@ ANSWER:
 Repeat for each of the 3 scenarios. Separate with ---
 Do not include any text before the first SCENARIO or after the last ANSWER."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
+    return _text
 
 def parse_scenarios(text):
     scenarios = []
@@ -94,7 +90,6 @@ def parse_scenarios(text):
     return scenarios
 
 def generate_multifile_scenarios(entry):
-    import random
     entry_type = entry.get("type", "exploration")
     confidence = entry.get("confidence", "Low")
     label = entry.get("topic") or entry.get("concept") or entry.get("tool") or entry.get("error", "unknown")
@@ -142,7 +137,7 @@ FILE_1:
 FILE_2_NAME: <realistic filename>
 FILE_2:
 <complete realistic file content>
-{f"FILE_3_NAME: <realistic filename>" + chr(10) + "FILE_3:" + chr(10) + "<complete realistic file content>" if num_files == 3 else ""}
+{"FILE_3_NAME: <realistic filename>" + chr(10) + "FILE_3:" + chr(10) + "<complete realistic file content>" if num_files == 3 else ""}
 QUESTION:
 <specific question — what is wrong, what does this do, or how would you fix it — that requires reading ALL files together>
 ANSWER:
@@ -152,12 +147,8 @@ ANSWER:
 Repeat for the 2nd scenario. Separate with ---
 Do not include any text before the first SCENARIO or after the last ANSWER."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.content[0].text
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
+    return _text
 
 
 def parse_multifile_scenarios(text):
@@ -208,7 +199,7 @@ def parse_multifile_scenarios(text):
 
 
 def load_scenario_cards():
-    path = "output/scenarios.json"
+    path = os.path.join(OUTPUT_DIR, "scenarios.json")
     if not os.path.exists(path):
         return []
     with open(path, "r", encoding="utf-8") as f:
