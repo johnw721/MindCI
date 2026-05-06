@@ -38,7 +38,7 @@ jobs:
         run: pytest tests/ -v
 
       - name: Compile-check entry points
-        run: python -m py_compile app_dashboard.py app.py mindci.py run_pipeline.py
+        run: python -m py_compile app_dashboard.py mindci.py run_pipeline.py
 
       - name: Smoke-import all pipeline modules
         run: |

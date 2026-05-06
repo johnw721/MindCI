@@ -16,4 +16,4 @@ ignore = [
 
 [lint.per-file-ignores]
 "tests/*"   = ["F811", "E711"]  # fixture redefinitions, == None comparisons
-"app.py"    = ["F", "E"]         # legacy 7-tab UI; not maintained
+"archive/*" = ["F", "E", "W"]    # legacy/archived files are not maintained

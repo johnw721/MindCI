@@ -24,12 +24,6 @@ Run the dashboard (recommended):
 streamlit run app_dashboard.py
 ```
 
-Or the legacy 7-tab UI:
-
-```bash
-streamlit run app.py
-```
-
 Or in a container:
 
 ```bash
@@ -45,7 +39,6 @@ The app auto-loads your last generated flashcards or scenarios on startup so you
 ```
 MindCI/
 ├── app_dashboard.py               # dashboard-first UI (sidebar nav + st.dialog modals)
-├── app.py                         # legacy 7-tab Streamlit interface
 ├── config.py                      # env validation, paths, model + token caps, JD freq loader
 ├── validation.py                  # Pydantic schemas for all entry types
 ├── aggregate_jd_frequencies.py    # aggregates saved JD reports into market_frequencies.json
