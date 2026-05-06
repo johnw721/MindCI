@@ -175,6 +175,50 @@ def current_freqs():
     return load_jd_frequencies()  # (frequencies_dict, source_label, report_count)
 
 
+# ── Mock-interview state persistence ──────────────────────────────────────────
+# Snapshots in-progress interview state so a Streamlit refresh / app restart
+# doesn't lose progress. File is removed when the session ends or is reset.
+IV_SESSION_PATH = Path(OUTPUT_DIR) / "iv_session.json"
+
+
+def _save_iv_state():
+    if not st.session_state.iv_active:
+        return
+    snapshot = {
+        "iv_active": True,
+        "iv_pool":   st.session_state.iv_pool,
+        "iv_idx":    st.session_state.iv_idx,
+        "iv_answer": st.session_state.iv_answer,
+        "iv_graded": st.session_state.iv_graded,
+        "iv_scores": st.session_state.iv_scores,
+    }
+    try:
+        IV_SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        IV_SESSION_PATH.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    except Exception:
+        pass  # persistence is best-effort, never block the UI
+
+
+def _load_iv_state():
+    """Restore state from disk if no active session is in memory."""
+    if st.session_state.iv_active or not IV_SESSION_PATH.exists():
+        return
+    try:
+        snap = json.loads(IV_SESSION_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    for k, v in snap.items():
+        st.session_state[k] = v
+
+
+def _clear_iv_state():
+    if IV_SESSION_PATH.exists():
+        try:
+            IV_SESSION_PATH.unlink()
+        except Exception:
+            pass
+
+
 def market_signal_top(n=8):
     freqs, _, _ = current_freqs()
     return sorted(freqs.items(), key=lambda x: -x[1])[:n]
@@ -322,6 +366,7 @@ def render_dashboard():
 # ══════════════════════════════════════════════════════════════════════════════
 def render_mock_interview():
     st.title("Mock Interview")
+    _load_iv_state()  # rehydrate from disk if no in-memory session
     stats = get_summary_stats()
 
     # Header stats line
@@ -348,6 +393,7 @@ def render_mock_interview():
             st.session_state.iv_answer = ""
             st.session_state.iv_graded = None
             st.session_state.iv_active = True
+            _save_iv_state()
             st.rerun()
         return
 
@@ -389,6 +435,7 @@ def render_mock_interview():
                                 q["answer"], user_ans, q.get("topic", ""),
                             )
                             st.session_state.iv_graded = grade
+                            _save_iv_state()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Grading failed: {e}")
@@ -401,10 +448,12 @@ def render_mock_interview():
                     st.session_state.iv_idx += 1
                     st.session_state.iv_answer = ""
                     st.session_state.iv_graded = None
+                    _save_iv_state()
                     st.rerun()
             with cols[2]:
                 if st.button("End session early"):
                     st.session_state.iv_idx = len(pool)
+                    _save_iv_state()
                     st.rerun()
         else:
             grade = st.session_state.iv_graded
@@ -432,6 +481,7 @@ def render_mock_interview():
                 st.session_state.iv_idx += 1
                 st.session_state.iv_answer = ""
                 st.session_state.iv_graded = None
+                _save_iv_state()
                 st.rerun()
         return
 
@@ -441,6 +491,7 @@ def render_mock_interview():
         st.warning("Session ended with no answers recorded.")
         if st.button("New session"):
             st.session_state.iv_active = False
+            _clear_iv_state()
             st.rerun()
         return
 
@@ -485,6 +536,9 @@ def render_mock_interview():
     with open(Path(OUTPUT_DIR) / "interview_report.json", "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     append_session(report)
+
+    # Session is complete and persisted to history; remove the in-progress snapshot.
+    _clear_iv_state()
 
     if st.button("New session", type="primary"):
         st.session_state.iv_active = False
@@ -1031,6 +1085,38 @@ def modal_review():
 # ══════════════════════════════════════════════════════════════════════════════
 # Modal: JD Analyzer (single + batch)
 # ══════════════════════════════════════════════════════════════════════════════
+def _maybe_autogen_weekly_plan(jd_result):
+    """Generate this ISO-week's plan if it doesn't already exist.
+    Returns the filename written, or None if skipped."""
+    now = datetime.now()
+    iso_year, iso_week, _ = now.isocalendar()
+    week_filename = f"weekly_plan_{iso_year}-W{iso_week:02d}.md"
+    week_path = Path(OUTPUT_DIR) / week_filename
+    if week_path.exists():
+        return None  # already done this week
+
+    # Extract gaps + role from either single or batch shape.
+    gaps = jd_result.get("priority_gaps") or []
+    role = jd_result.get("role_title")
+    if not gaps and "aggregate" in jd_result:
+        agg = jd_result["aggregate"] or {}
+        gaps = [
+            {"domain": g["skill"], "urgency": g.get("urgency", "Medium"),
+             "action": "Close this market-frequent gap."}
+            for g in agg.get("most_common_gaps", [])[:2]
+        ]
+        role = role or agg.get("best_fit_role")
+    role = role or "Cloud Engineer"
+    if not gaps:
+        return None
+
+    plan = generate_weekly_plan(gaps, role, st.session_state.weekly_hours)
+    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    week_path.write_text(plan, encoding="utf-8")
+    (Path(OUTPUT_DIR) / "weekly_plan.md").write_text(plan, encoding="utf-8")
+    return week_filename
+
+
 @_dialog_decorator("🎯 JD Analyzer")
 def modal_jd():
     kb = load_kb_safe()
@@ -1061,6 +1147,7 @@ def modal_jd():
     if st.button(run_label, type="primary", key="m_jd_run"):
         with st.spinner("Analyzing…"):
             try:
+                analyzed = None
                 if mode == "Single":
                     jds = parse_jds(st.session_state.jd_text)
                     result = run_gap_analysis(jds[0], kb)
@@ -1068,6 +1155,7 @@ def modal_jd():
                     st.session_state.jd_batch_result = None
                     save_jd_report(result, prefix="single")
                     trigger_aggregation()
+                    analyzed = result
                 else:
                     jds = parse_jds(st.session_state.jd_text)
                     if len(jds) < 2:
@@ -1078,6 +1166,16 @@ def modal_jd():
                         st.session_state.jd_result = None
                         save_jd_report(batch, prefix="batch")
                         trigger_aggregation()
+                        analyzed = batch
+
+                # Auto-generate this week's plan if there isn't one yet.
+                if analyzed is not None:
+                    try:
+                        new_plan = _maybe_autogen_weekly_plan(analyzed)
+                        if new_plan:
+                            st.success(f"Auto-generated weekly plan → {new_plan}")
+                    except Exception as e:
+                        st.caption(f"Auto-plan skipped: {e}")
             except Exception as e:
                 st.error(f"Error: {e}")
 

@@ -69,7 +69,8 @@ MindCI/
 │   ├── jd_analyzer.py             # single and batch JD gap analysis, report saving
 │   ├── weekly.py                  # weekly execution plan generation
 │   ├── suggestions.py             # topic suggestions, cold-test question generation
-│   └── quality.py                 # CPM markers + cheat sheet, quality scoring, enrichment assistant, live preview
+│   ├── quality.py                 # CPM markers + cheat sheet, quality scoring, enrichment assistant, live preview
+│   └── watcher.py                 # debounced raw/ filesystem watcher (used by `mindci watch`)
 ├── prompts/
 │   ├── project.txt
 │   ├── cert.txt
@@ -125,8 +126,12 @@ Approve / reject / skip flow for flashcards (flip mechanic) and scenarios (rende
 
 **Batch** — multiple JDs separated by `---` or uploaded as a `.txt`. Aggregate view: most common gaps, consistent strengths, average readiness, best-fit role. Auto-saves to `jd_reports/` and triggers `aggregate_jd_frequencies.py`.
 
+After either mode, if no weekly plan exists for the current ISO week, one is auto-generated from the priority gaps and saved to both `output/weekly_plan.md` (canonical) and `output/weekly_plan_YYYY-WNN.md` (archive).
+
 ### 5. Mock Interview (sidebar view)
 Multi-step session: question-count slider → per-question UI with setup, code/files, your answer → Claude grades 0-10 with verdict (Strong/Acceptable/Needs Work/Incorrect), what you got right, what you missed, coaching note → end screen with breakdown bars, focus areas, auto-saved to `output/interview_report.json` and appended to history.
+
+In-progress sessions are snapshotted to `output/iv_session.json` after each step, so a refresh / app restart picks up exactly where you left off. The snapshot is removed when the session ends.
 
 ### 6. Weekly Plan
 Reads last JD report, generates a 7-day execution plan for top 2 priority gaps. Per gap: hands-on GitHub project, blog article title, reusable lab exercise, resume bullet, STAR-format interview story. Hours slider before generating.
@@ -188,10 +193,14 @@ python mindci.py convert              # raw/*.txt → data/structured.json
 python mindci.py generate             # KB → output/anki.csv + questions.md
 python mindci.py aggregate            # rebuild data/market_frequencies.json
 python mindci.py dashboard            # launch streamlit dashboard
+python mindci.py watch                # watch raw/ and auto-convert on file drop
 
 python mindci.py generate --batch-size 4
 python mindci.py convert --no-archive   # leave notes in raw/ instead of archiving
+python mindci.py watch --no-archive     # same flag works in watch mode
 ```
+
+`watch` uses `watchdog` with a 2.5s debounce, so editor "atomic save" sequences trigger only one convert run. Drop a `.txt` into `raw/` from anywhere (Dropbox/Drive sync, mobile shortcut, scp) and it's structured and indexed within seconds.
 
 `run_pipeline.py` is a thin alias for `mindci.py run`.
 
@@ -310,6 +319,8 @@ live JD frequency aggregation
 | `output/scenarios.json` | Generated scenario questions |
 | `output/interview_report.json` | Last mock interview session |
 | `output/interview_history.json` | All session history |
+| `output/iv_session.json` | In-progress mock-interview snapshot (refresh-survivable) |
 | `output/jd_report.json` | Last JD analysis (single or batch aggregate) |
-| `output/weekly_plan.md` | Last generated study plan |
+| `output/weekly_plan.md` | Current canonical study plan |
+| `output/weekly_plan_YYYY-WNN.md` | Per-ISO-week plan archive (auto-generated after JD analysis) |
 | `jd_reports/` | Individual saved JD reports for aggregation |

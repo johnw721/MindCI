@@ -2,6 +2,7 @@ streamlit>=1.36
 anthropic>=0.40
 pydantic>=2.7
 python-dotenv>=1.0
+watchdog>=4.0
 
 # dev / test
 pytest>=8.0

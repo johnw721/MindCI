@@ -156,6 +156,27 @@ def cmd_dashboard(_args) -> int:
     )
 
 
+# ── watch ─────────────────────────────────────────────────────────────────────
+def cmd_watch(args) -> int:
+    """Watch RAW_DIR and auto-convert when .txt files settle."""
+    from pipeline.watcher import watch
+
+    class _ConvertArgs:
+        no_archive = args.no_archive
+
+    def on_settled(file_paths):
+        print(f"\n→ {len(file_paths)} file(s) settled:")
+        for p in file_paths:
+            print(f"   {p}")
+        try:
+            cmd_convert(_ConvertArgs())
+        except Exception as e:
+            print(f"  ! convert failed: {e}")
+
+    watch(on_settled)
+    return 0
+
+
 # ── argparse wiring ───────────────────────────────────────────────────────────
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -183,6 +204,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_dash = sub.add_parser("dashboard", help="launch the Streamlit dashboard")
     p_dash.set_defaults(func=cmd_dashboard)
+
+    p_watch = sub.add_parser("watch", help="watch raw/ and auto-convert dropped .txt files")
+    p_watch.add_argument("--no-archive", action="store_true",
+                         help="leave raw notes in raw/ instead of moving to archive/")
+    p_watch.set_defaults(func=cmd_watch)
 
     return p
 
