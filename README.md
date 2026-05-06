@@ -51,7 +51,7 @@ MindCI/
 ├── docker-compose.yml             # local container orchestration with volume mounts
 ├── .dockerignore
 ├── .pre-commit-config.yaml        # ruff + pytest before every commit
-├── .github/workflows/ci.yml       # lint, test, compile-check, smoke-import on push/PR
+├── .github/workflows/ci.yml       # lint, test, compile-check, smoke-import, docker build on push/PR
 ├── pipeline/
 │   ├── __init__.py
 │   ├── _client.py                 # lazy Anthropic client + universal retry + cost telemetry
@@ -70,7 +70,7 @@ MindCI/
 │   ├── project.txt
 │   ├── cert.txt
 │   └── explore.txt
-├── tests/                         # pytest suite (25 tests, runs in <1s)
+├── tests/                         # pytest suite (50 tests, runs in <1s)
 │   ├── conftest.py                # env stubbing + lazy-client monkeypatch
 │   ├── test_client_retry.py
 │   ├── test_config.py
@@ -220,7 +220,7 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 pytest tests/ -v
 ```
 
-25 deterministic tests, runs in well under a second. Coverage:
+50 deterministic tests, runs in well under a second. Coverage:
 
 - `test_validation.py` — Pydantic schemas, type rejection, normalization, warnings
 - `test_quality.py` — note quality scoring, KB entry scoring, type detection
@@ -242,7 +242,7 @@ pytest tests/ -v
 
 ## CI + pre-commit
 
-`.github/workflows/ci.yml` runs on every push to `main` and every PR: ruff lint, full pytest, `py_compile` on entry points, smoke-import all pipeline modules.
+`.github/workflows/ci.yml` runs on every push to `main` and every PR: ruff lint, full pytest, `py_compile` on entry points, smoke-import all pipeline modules, and a `docker build` of the image to catch Dockerfile regressions.
 
 `.pre-commit-config.yaml` runs the same checks locally before every commit:
 
