@@ -3,10 +3,11 @@ import os
 
 from config import MAX_TOKENS_GENERATION
 from pipeline._client import call_with_retry
+from pipeline.calibration import effective_confidence
 
 
 def build_dynamic_prompt(base_prompt, entry):
-    confidence = entry.get("confidence", "Low")
+    confidence = effective_confidence(entry)
     difficulty = entry.get("difficulty", "Medium")
 
     if confidence == "High":
@@ -66,7 +67,7 @@ def parse_qa(text):
 
 
 def classify(entry):
-    c = entry.get("confidence", "Low")
+    c = effective_confidence(entry)
     if c == "High":
         return "AUTO-PASS"
     elif c == "Medium":

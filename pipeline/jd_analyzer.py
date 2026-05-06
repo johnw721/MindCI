@@ -4,13 +4,14 @@ import re
 
 from config import JD_REPORTS_DIR, MAX_TOKENS_ANALYSIS, MAX_TOKENS_BATCH
 from pipeline._client import call_with_retry
+from pipeline.calibration import effective_confidence
 
 
 def run_gap_analysis(jd_text, knowledge_base):
     kb_summary = [{
         "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
         "type": e.get("type"),
-        "confidence": e.get("confidence", "Unknown"),
+        "confidence": effective_confidence(e) if (e.get("auto_confidence") or e.get("confidence")) else "Unknown",
         "difficulty": e.get("difficulty", "Unknown"),
     } for e in knowledge_base]
 
@@ -48,7 +49,7 @@ def run_batch_analysis(jd_texts, knowledge_base):
     kb_summary = [{
         "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
         "type": e.get("type"),
-        "confidence": e.get("confidence", "Unknown"),
+        "confidence": effective_confidence(e) if (e.get("auto_confidence") or e.get("confidence")) else "Unknown",
         "difficulty": e.get("difficulty", "Unknown"),
     } for e in knowledge_base]
 

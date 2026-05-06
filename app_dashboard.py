@@ -537,6 +537,22 @@ def render_mock_interview():
         json.dump(report, f, indent=2)
     append_session(report)
 
+    # Adaptive recalibration — update each entry's auto_confidence from rolling
+    # interview history. Tight trigger surface: only after a session is committed.
+    try:
+        from pipeline.calibration import recalibrate_kb
+        changes = recalibrate_kb()
+        if changes:
+            st.markdown("#### Calibration update")
+            for c in changes:
+                arrow = "↑" if ("Low", "Medium", "High").index(c["new"]) > ("Low", "Medium", "High").index(c["old"]) else "↓"
+                st.caption(
+                    f"{arrow} **{c['label']}**  {c['old']} → {c['new']}  "
+                    f"(avg {c['avg']}/10 over {c['samples']} attempts)"
+                )
+    except Exception as e:
+        st.caption(f"Calibration skipped: {e}")
+
     # Session is complete and persisted to history; remove the in-progress snapshot.
     _clear_iv_state()
 
@@ -568,11 +584,14 @@ def render_knowledge_base():
     conf_filter = cols[1].multiselect(
         "Confidence", options=["Low", "Medium", "High"],
     )
+    from pipeline.calibration import effective_confidence
     filtered = kb
     if type_filter:
         filtered = [e for e in filtered if e.get("type") in type_filter]
     if conf_filter:
-        filtered = [e for e in filtered if e.get("confidence") in conf_filter]
+        # Filter on effective (auto if set, else manual) so the user sees what
+        # the system is actually using.
+        filtered = [e for e in filtered if effective_confidence(e) in conf_filter]
 
     st.caption(f"{len(filtered)} of {len(kb)} entries")
 
@@ -586,8 +605,18 @@ def render_knowledge_base():
             label = (e.get("topic") or e.get("concept") or
                      e.get("tool") or e.get("error", "—"))
             q = score_kb_entry(e)
-            with st.expander(f"{label}  ·  conf {e.get('confidence', '?')}  ·  quality {q['score']}/10"):
+            eff = effective_confidence(e)
+            manual = e.get("confidence", "?")
+            # Surface a recalibration flag in the header when auto ≠ manual
+            if e.get("auto_confidence") and e["auto_confidence"] != manual:
+                conf_str = f"conf **{eff}** (manual: {manual} · auto-updated)"
+            else:
+                conf_str = f"conf {eff}"
+            with st.expander(f"{label}  ·  {conf_str}  ·  quality {q['score']}/10"):
                 quality_badge(q["score"])
+                if e.get("auto_confidence") and e["auto_confidence"] != manual:
+                    ts = e.get("confidence_updated_at", "")
+                    st.caption(f"Auto-confidence: **{e['auto_confidence']}** (manual seed: {manual}) · updated {ts}")
                 if q["issues"]:
                     st.warning("Enrichment suggestions: " + "; ".join(q["issues"]))
                 st.json(e)

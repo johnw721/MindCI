@@ -3,6 +3,7 @@ import os
 
 from config import MAX_TOKENS_ANALYSIS, load_jd_frequencies
 from pipeline._client import call_with_retry
+from pipeline.calibration import effective_confidence
 
 
 def generate_topic_suggestions(knowledge_base, jd_report=None):
@@ -10,7 +11,7 @@ def generate_topic_suggestions(knowledge_base, jd_report=None):
     freqs, _, _ = load_jd_frequencies()
     kb_summary = [{
         "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
-        "confidence": e.get("confidence", "Low"),
+        "confidence": effective_confidence(e),
         "type": e.get("type")
     } for e in knowledge_base]
 

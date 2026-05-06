@@ -45,6 +45,8 @@ class ProjectEntry(BaseModel):
     confidence: str = "Low"
     difficulty: str = "Medium"
     source: Optional[str] = ""
+    auto_confidence: Optional[str] = None         # set by pipeline.calibration
+    confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -80,6 +82,8 @@ class CertificationEntry(BaseModel):
     confidence: str = "Low"
     difficulty: str = "Medium"
     source: Optional[str] = ""
+    auto_confidence: Optional[str] = None         # set by pipeline.calibration
+    confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -115,6 +119,8 @@ class ExplorationEntry(BaseModel):
     confidence: str = "Low"
     difficulty: str = "Medium"
     source: Optional[str] = ""
+    auto_confidence: Optional[str] = None         # set by pipeline.calibration
+    confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
 
     @field_validator("confidence", mode="before")
     @classmethod

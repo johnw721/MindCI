@@ -116,7 +116,8 @@ def score_kb_entry(entry):
     label = entry.get("topic") or entry.get("concept") or entry.get("tool") or entry.get("error", "unknown")
     entry_type = entry.get("type", "unknown")
 
-    if entry.get("confidence") in ("High", "Medium", "Low"):
+    from pipeline.calibration import effective_confidence
+    if effective_confidence(entry) in ("High", "Medium", "Low"):
         score += 2
         passes.append("Confidence set")
     else:

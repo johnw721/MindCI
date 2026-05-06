@@ -4,6 +4,7 @@ import random
 
 from config import MAX_TOKENS_GENERATION, OUTPUT_DIR
 from pipeline._client import call_with_retry
+from pipeline.calibration import effective_confidence
 
 # Scenario generation logic
 
@@ -16,7 +17,7 @@ SCENARIO_TYPES = {
 
 def generate_scenarios(entry):
     entry_type = entry.get("type", "exploration")
-    confidence = entry.get("confidence", "Low")
+    confidence = effective_confidence(entry)
     label = entry.get("topic") or entry.get("concept") or entry.get("tool") or entry.get("error", "unknown")
 
     # Bias scenario types by entry type
@@ -91,7 +92,7 @@ def parse_scenarios(text):
 
 def generate_multifile_scenarios(entry):
     entry_type = entry.get("type", "exploration")
-    confidence = entry.get("confidence", "Low")
+    confidence = effective_confidence(entry)
     label = entry.get("topic") or entry.get("concept") or entry.get("tool") or entry.get("error", "unknown")
 
     num_files = random.choice([2, 2, 3])  # bias toward 2 files

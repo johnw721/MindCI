@@ -70,6 +70,7 @@ MindCI/
 │   ├── weekly.py                  # weekly execution plan generation
 │   ├── suggestions.py             # topic suggestions, cold-test question generation
 │   ├── quality.py                 # CPM markers + cheat sheet, quality scoring, enrichment assistant, live preview
+│   ├── calibration.py             # adaptive auto_confidence from rolling interview history
 │   └── watcher.py                 # debounced raw/ filesystem watcher (used by `mindci watch`)
 ├── prompts/
 │   ├── project.txt
@@ -133,6 +134,8 @@ Multi-step session: question-count slider → per-question UI with setup, code/f
 
 In-progress sessions are snapshotted to `output/iv_session.json` after each step, so a refresh / app restart picks up exactly where you left off. The snapshot is removed when the session ends.
 
+After every completed session, `pipeline/calibration.recalibrate_kb()` runs and updates each KB entry's `auto_confidence` from the rolling average of its last 5 attempt scores (skipped answers count as 0). Tier mapping with hysteresis: avg ≥ 8.5 → High, ≥ 6.5 → Medium, < 5.5 → Low; promotions and demotions both require crossing a 0.5-point buffer to avoid flapping. Min 3 attempts before any change. Manual `confidence` is the original seed and is never overwritten — `effective_confidence(entry)` is the single read point that downstream prompts and weighting use, returning auto if set, else manual. The end-of-session screen surfaces a "Calibration update" block with each change.
+
 ### 6. Weekly Plan
 Reads last JD report, generates a 7-day execution plan for top 2 priority gaps. Per gap: hands-on GitHub project, blog article title, reusable lab exercise, resume bullet, STAR-format interview story. Hours slider before generating.
 
@@ -140,7 +143,7 @@ Reads last JD report, generates a 7-day execution plan for top 2 priority gaps. 
 Compares KB against market frequency data. Three categories: uncovered high-demand topics, weak-but-in-demand, emerging. **Cold test button** on each item generates 3 questions from the topic name alone — tests whether the gap is knowledge or confidence before committing to a study session.
 
 ### 8. Knowledge Base
-Filterable viewer by type and confidence. Each entry shows a quality score badge with enrichment suggestions inline; raw JSON expandable.
+Filterable viewer by type and confidence (filter operates on the *effective* confidence — auto if set, else manual). Each entry shows a quality score badge with enrichment suggestions inline; raw JSON expandable. When `auto_confidence` differs from the manual seed, the header surfaces both with an `auto-updated` annotation and a timestamp inside the expander.
 
 ---
 
@@ -221,6 +224,7 @@ pytest tests/ -v
 - `test_scenarios.py` — single + multi-file scenario parsers
 - `test_client_retry.py` — success, retry-then-success, exhaustion
 - `test_cost_telemetry.py` — usage recording, pricing math, end-to-end via fake client
+- `test_calibration.py` — `effective_confidence` precedence, topic matching, hysteresis on each tier transition, min-sample guard, end-to-end recalibration write
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 
@@ -296,11 +300,19 @@ python mindci.py aggregate
 
 ```
 raw notes → structured JSON → flashcards + scenarios → mock interview
-       ↑                                                      |
-topic suggestions ← JD analyzer ← knowledge base ←-----------
-       ↑
-live JD frequency aggregation
+       ↑              ↑                                       |
+topic suggestions     |                                       |
+       ↑              auto_confidence (per-entry) ←──── calibration
+       |                                                      |
+       └─ JD analyzer ← knowledge base ←─────────────────────┘
+              ↑
+       live JD frequency aggregation
 ```
+
+Two compounding loops:
+
+- **Outer (market-aware):** JD analyses feed live frequencies → topic suggestions → new notes.
+- **Inner (performance-adaptive):** mock interview scores → `auto_confidence` per entry → next Generate run produces flashcards/scenarios calibrated to current ability → next mock interview is harder/easier where it should be.
 
 ---
 
@@ -308,7 +320,7 @@ live JD frequency aggregation
 
 | File | Description |
 |---|---|
-| `data/structured.json` | Validated knowledge base |
+| `data/structured.json` | Validated knowledge base (entries carry `confidence` seed + `auto_confidence` + `confidence_updated_at`) |
 | `data/invalid_entries.json` | Entries that failed validation |
 | `data/market_frequencies.json` | Aggregated JD skill frequencies |
 | `data/usage.json` | Daily API token + cost log |

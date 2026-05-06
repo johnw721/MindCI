@@ -1,4 +1,12 @@
 [
+  "tests/test_calibration.py::test_effective_confidence_prefers_auto_then_manual",
+  "tests/test_calibration.py::test_entry_matches_topic_across_label_variants",
+  "tests/test_calibration.py::test_next_tier_climb_requires_threshold_plus_buffer",
+  "tests/test_calibration.py::test_next_tier_drop_requires_threshold_minus_buffer",
+  "tests/test_calibration.py::test_next_tier_medium_sticks_in_the_band",
+  "tests/test_calibration.py::test_recalibrate_skips_below_min_samples",
+  "tests/test_calibration.py::test_recalibrate_writes_auto_confidence_and_changelog",
+  "tests/test_calibration.py::test_recent_scores_pulls_only_last_n_for_matching_topic",
   "tests/test_client_retry.py::test_first_attempt_success_returns_text",
   "tests/test_client_retry.py::test_raises_after_exhausting_retries",
   "tests/test_client_retry.py::test_retries_until_success",
