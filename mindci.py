@@ -156,6 +156,34 @@ def cmd_dashboard(_args) -> int:
     )
 
 
+# ── cache ─────────────────────────────────────────────────────────────────────
+def cmd_cache_stats(_args) -> int:
+    """Show current response-cache size + hit rate."""
+    from pipeline._client import _cache_load, get_usage_summary
+
+    entries = _cache_load()
+    summary = get_usage_summary()
+    cache = summary["cache"]
+    total = cache["hits"] + cache["misses"]
+    hit_pct = int(100 * cache["hits"] / total) if total else 0
+    print(f"  cache entries: {len(entries)}")
+    print(f"  cumulative:    {cache['hits']}/{total} hits ({hit_pct}%)")
+    return 0
+
+
+def cmd_cache_clear(_args) -> int:
+    """Delete the on-disk response cache. Cumulative hit/miss counts are preserved."""
+    from pipeline._client import _cache_path
+
+    p = _cache_path()
+    if p.exists():
+        p.unlink()
+        print(f"  ✓ removed {p}")
+    else:
+        print(f"  (no cache file at {p})")
+    return 0
+
+
 # ── watch ─────────────────────────────────────────────────────────────────────
 def cmd_watch(args) -> int:
     """Watch RAW_DIR and auto-convert when .txt files settle."""
@@ -209,6 +237,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--no-archive", action="store_true",
                          help="leave raw notes in raw/ instead of moving to archive/")
     p_watch.set_defaults(func=cmd_watch)
+
+    p_cache_stats = sub.add_parser("cache-stats", help="show response cache size + hit rate")
+    p_cache_stats.set_defaults(func=cmd_cache_stats)
+
+    p_cache_clear = sub.add_parser("cache-clear", help="delete the response cache file")
+    p_cache_clear.set_defaults(func=cmd_cache_clear)
 
     return p
 

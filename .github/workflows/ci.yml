@@ -43,3 +43,6 @@ jobs:
       - name: Smoke-import all pipeline modules
         run: |
           python -c "from pipeline import convert, generate, interview, jd_analyzer, scenarios, suggestions, weekly, quality, _client; print('all pipeline modules import cleanly')"
+
+      - name: Build Docker image
+        run: docker build -t mindci:ci .

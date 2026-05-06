@@ -200,6 +200,8 @@ python mindci.py generate             # KB → output/anki.csv + questions.md
 python mindci.py aggregate            # rebuild data/market_frequencies.json
 python mindci.py dashboard            # launch streamlit dashboard
 python mindci.py watch                # watch raw/ and auto-convert on file drop
+python mindci.py cache-stats          # show response cache size + hit rate
+python mindci.py cache-clear          # delete the response cache file
 
 python mindci.py generate --batch-size 4
 python mindci.py convert --no-archive   # leave notes in raw/ instead of archiving
@@ -232,6 +234,7 @@ pytest tests/ -v
 - `test_markdown_frontmatter.py` — frontmatter extraction (with/without, quoted values, malformed)
 - `test_weekly_progress.py` — checklist parser, save/load round-trip, completion stats
 - `test_response_cache.py` — hit-skips-API, prompt + max_tokens key isolation, `MINDCI_CACHE_DISABLE` bypass, LRU eviction at cap
+- `test_integration_e2e.py` — cassette-style end-to-end: (1) raw note → convert → KB write → generate flashcards → parsable Q/A; (2) build interview pool → score answer → append session → `recalibrate_kb` flips `auto_confidence` Low → High and preserves the manual seed
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 

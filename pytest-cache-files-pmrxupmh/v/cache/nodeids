@@ -19,6 +19,8 @@
   "tests/test_cost_telemetry.py::test_get_usage_summary_blank_when_no_file",
   "tests/test_cost_telemetry.py::test_get_usage_summary_computes_cost_from_pricing",
   "tests/test_cost_telemetry.py::test_record_usage_creates_and_appends_to_today",
+  "tests/test_integration_e2e.py::test_convert_then_generate_writes_kb_and_flashcards",
+  "tests/test_integration_e2e.py::test_interview_pool_score_and_recalibrate_round_trip",
   "tests/test_jd_parsing.py::test_dashes_split_multiple_jds",
   "tests/test_jd_parsing.py::test_short_chunks_are_dropped_below_threshold",
   "tests/test_jd_parsing.py::test_single_jd_returns_one_element",
