@@ -64,6 +64,7 @@ MindCI/
 │   ├── suggestions.py             # topic suggestions, cold-test question generation
 │   ├── quality.py                 # CPM markers + cheat sheet, quality scoring, enrichment assistant, live preview
 │   ├── calibration.py             # adaptive auto_confidence from rolling interview history
+│   ├── weekly_progress.py         # parse `- [ ]` checkboxes from archived weekly plans, persist completion
 │   └── watcher.py                 # debounced raw/ filesystem watcher (used by `mindci watch`)
 ├── prompts/
 │   ├── project.txt
@@ -103,6 +104,8 @@ Two quality layers before the API call:
 
 After commit, Claude structures notes into `data/structured.json` by type: `project`, `certification`, or `exploration`. Pydantic-validated; invalid entries saved separately to `data/invalid_entries.json`. Defaulted fields surface as warnings. Previous versions of `structured.json` are versioned to `data/history/` (copy-on-write).
 
+**Markdown + frontmatter ingest** — the file uploader accepts both `.txt` and `.md`. If a `.md` file starts with a YAML-style `---` frontmatter block (top-level `key: value` pairs, no nested structures), `pipeline.convert.parse_markdown_with_frontmatter` extracts it and surfaces a "Detected frontmatter" caption. Detected metadata is handed to Claude as a `KNOWN METADATA` hint so pre-known fields (type, confidence, difficulty, etc.) don't get re-inferred and tokens are saved. Drag Obsidian notes in directly — no `.txt` conversion required.
+
 ### 2. Generate (modal)
 Three sub-modes with type and confidence filters:
 
@@ -132,11 +135,15 @@ After every completed session, `pipeline/calibration.recalibrate_kb()` runs and 
 ### 6. Weekly Plan
 Reads last JD report, generates a 7-day execution plan for top 2 priority gaps. Per gap: hands-on GitHub project, blog article title, reusable lab exercise, resume bullet, STAR-format interview story. Hours slider before generating.
 
+**Archival + retrospective.** The plan prompt emits each actionable item as a `- [ ]` markdown task list line. The Weekly Plan view has a week selector that lists every archived `weekly_plan_YYYY-WNN.md`; selecting one renders the plan with checkboxes per task. Toggling a checkbox persists to `data/weekly_progress.json` (keyed by week + task index). The header shows `2026-W19 — 4/7 tasks done (57%)` so adherence is visible at a glance.
+
 ### 7. Topic Suggestions
 Compares KB against market frequency data. Three categories: uncovered high-demand topics, weak-but-in-demand, emerging. **Cold test button** on each item generates 3 questions from the topic name alone — tests whether the gap is knowledge or confidence before committing to a study session.
 
 ### 8. Knowledge Base
 Filterable viewer by type and confidence (filter operates on the *effective* confidence — auto if set, else manual). Each entry shows a quality score badge with enrichment suggestions inline; raw JSON expandable. When `auto_confidence` differs from the manual seed, the header surfaces both with an `auto-updated` annotation and a timestamp inside the expander.
+
+**Confidence sparkline** — when an entry has a non-empty `confidence_history`, the expander shows a Unicode block-char sparkline of the last 8 tier transitions plus a textual `Low → Medium → High` trail. Capped at 20 transitions per entry; only appended when a tier actually changes (driven by `pipeline.calibration`).
 
 ---
 
@@ -218,6 +225,9 @@ pytest tests/ -v
 - `test_client_retry.py` — success, retry-then-success, exhaustion
 - `test_cost_telemetry.py` — usage recording, pricing math, end-to-end via fake client
 - `test_calibration.py` — `effective_confidence` precedence, topic matching, hysteresis on each tier transition, min-sample guard, end-to-end recalibration write
+- `test_confidence_history.py` — history append on tier change + cap at 20
+- `test_markdown_frontmatter.py` — frontmatter extraction (with/without, quoted values, malformed)
+- `test_weekly_progress.py` — checklist parser, save/load round-trip, completion stats
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 
@@ -313,7 +323,8 @@ Two compounding loops:
 
 | File | Description |
 |---|---|
-| `data/structured.json` | Validated knowledge base (entries carry `confidence` seed + `auto_confidence` + `confidence_updated_at`) |
+| `data/structured.json` | Validated knowledge base (entries carry `confidence` seed + `auto_confidence` + `confidence_updated_at` + `confidence_history`) |
+| `data/weekly_progress.json` | Per-task completion state for archived weekly plans (`{week: {task_idx: bool}}`) |
 | `data/invalid_entries.json` | Entries that failed validation |
 | `data/market_frequencies.json` | Aggregated JD skill frequencies |
 | `data/usage.json` | Daily API token + cost log |

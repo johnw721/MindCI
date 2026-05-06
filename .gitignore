@@ -7,6 +7,7 @@ data/structured.json
 data/market_frequencies.json
 data/history/
 data/usage.json
+data/weekly_progress.json
 __pycache__/
 *.pyc
 *.pyo

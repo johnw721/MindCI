@@ -33,6 +33,7 @@ HYSTERESIS_BUFFER = 0.5
 
 LAST_N_ATTEMPTS = 5
 MIN_SAMPLE_SIZE = 3
+HISTORY_CAP     = 20  # most recent N tier transitions kept per entry
 
 KB_PATH      = Path(DATA_DIR)   / "structured.json"
 HISTORY_PATH = Path(OUTPUT_DIR) / "interview_history.json"
@@ -138,6 +139,12 @@ def recalibrate_kb() -> list[dict]:
             continue
         entry["auto_confidence"]       = new
         entry["confidence_updated_at"] = now
+        # Append to confidence_history (cap at HISTORY_CAP). Stored as a list
+        # of [timestamp, tier] pairs so old JSON without this field is fine.
+        # Note: do NOT shadow the outer `history` (interview history) here.
+        entry_history = entry.get("confidence_history") or []
+        entry_history.append([now, new])
+        entry["confidence_history"]    = entry_history[-HISTORY_CAP:]
         changes.append({
             "label":   entry_label(entry),
             "old":     current,

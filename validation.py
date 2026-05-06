@@ -47,6 +47,7 @@ class ProjectEntry(BaseModel):
     source: Optional[str] = ""
     auto_confidence: Optional[str] = None         # set by pipeline.calibration
     confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
+    confidence_history: Optional[list] = None     # [[ts, tier], ...] capped at 20
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -84,6 +85,7 @@ class CertificationEntry(BaseModel):
     source: Optional[str] = ""
     auto_confidence: Optional[str] = None         # set by pipeline.calibration
     confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
+    confidence_history: Optional[list] = None     # [[ts, tier], ...] capped at 20
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -121,6 +123,7 @@ class ExplorationEntry(BaseModel):
     source: Optional[str] = ""
     auto_confidence: Optional[str] = None         # set by pipeline.calibration
     confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
+    confidence_history: Optional[list] = None     # [[ts, tier], ...] capped at 20
 
     @field_validator("confidence", mode="before")
     @classmethod

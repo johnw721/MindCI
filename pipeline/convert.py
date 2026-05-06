@@ -28,6 +28,33 @@ def _strip_fences(text):
     return clean.strip()
 
 
+def parse_markdown_with_frontmatter(content: str) -> tuple[dict, str]:
+    """Extract YAML-style frontmatter from a markdown file.
+    Returns (metadata_dict, body_text). If no frontmatter, returns ({}, content).
+
+    Supports a tiny subset (no new dependency): top-of-file `---` block with
+    `key: value` pairs, one per line. No nested structures, no list values,
+    no multi-line strings. Quotes around values are stripped.
+    """
+    if not content.startswith("---"):
+        return {}, content
+    rest = content[3:].lstrip("\n")
+    end_idx = rest.find("\n---")
+    if end_idx == -1:
+        return {}, content
+    fm_block = rest[:end_idx]
+    body = rest[end_idx + 4:].lstrip("\n")  # skip past "\n---"
+    meta: dict = {}
+    for line in fm_block.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" in line:
+            k, _, v = line.partition(":")
+            meta[k.strip()] = v.strip().strip('"').strip("'")
+    return meta, body
+
+
 def convert_to_json(raw_text):
     prompt = f"""
 Convert the following raw technical notes into structured JSON.

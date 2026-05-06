@@ -26,6 +26,7 @@ data/structured.json
 data/history
 data/market_frequencies.json
 data/usage.json
+data/weekly_progress.json
 raw
 output
 jd_reports

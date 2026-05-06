@@ -10,6 +10,8 @@
   "tests/test_client_retry.py::test_first_attempt_success_returns_text",
   "tests/test_client_retry.py::test_raises_after_exhausting_retries",
   "tests/test_client_retry.py::test_retries_until_success",
+  "tests/test_confidence_history.py::test_confidence_history_appends_on_tier_change",
+  "tests/test_confidence_history.py::test_confidence_history_caps_at_history_cap",
   "tests/test_config.py::test_baseline_when_no_aggregated_file_exists",
   "tests/test_config.py::test_blended_below_threshold_merges_live_and_baseline",
   "tests/test_config.py::test_live_when_at_or_above_threshold",
@@ -20,6 +22,10 @@
   "tests/test_jd_parsing.py::test_dashes_split_multiple_jds",
   "tests/test_jd_parsing.py::test_short_chunks_are_dropped_below_threshold",
   "tests/test_jd_parsing.py::test_single_jd_returns_one_element",
+  "tests/test_markdown_frontmatter.py::test_frontmatter_extracted_and_body_preserved",
+  "tests/test_markdown_frontmatter.py::test_no_frontmatter_returns_empty_meta_and_full_body",
+  "tests/test_markdown_frontmatter.py::test_quoted_values_are_stripped",
+  "tests/test_markdown_frontmatter.py::test_unclosed_frontmatter_returns_full_content_unchanged",
   "tests/test_quality.py::test_detect_entry_type_routes_by_keyword",
   "tests/test_quality.py::test_rich_note_with_all_signals_scores_high",
   "tests/test_quality.py::test_score_kb_entry_rewards_detail_in_project_fields",
@@ -31,5 +37,9 @@
   "tests/test_validation.py::test_missing_optional_confidence_emits_warning_not_error",
   "tests/test_validation.py::test_missing_required_field_routes_to_invalid",
   "tests/test_validation.py::test_unknown_type_is_rejected",
-  "tests/test_validation.py::test_valid_project_entry_round_trips"
+  "tests/test_validation.py::test_valid_project_entry_round_trips",
+  "tests/test_weekly_progress.py::test_parse_checklist_extracts_only_task_list_lines",
+  "tests/test_weekly_progress.py::test_save_and_load_progress_round_trip",
+  "tests/test_weekly_progress.py::test_week_completion_counts_baseline_plus_overrides",
+  "tests/test_weekly_progress.py::test_week_completion_zero_when_no_tasks"
 ]

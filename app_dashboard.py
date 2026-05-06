@@ -617,6 +617,14 @@ def render_knowledge_base():
                 if e.get("auto_confidence") and e["auto_confidence"] != manual:
                     ts = e.get("confidence_updated_at", "")
                     st.caption(f"Auto-confidence: **{e['auto_confidence']}** (manual seed: {manual}) · updated {ts}")
+                # Confidence sparkline — Unicode block chars, last 8 transitions
+                history = e.get("confidence_history") or []
+                if history:
+                    block_for = {"Low": "▂", "Medium": "▅", "High": "█"}
+                    recent = history[-8:]
+                    spark = "".join(block_for.get(tier, "·") for _, tier in recent)
+                    tiers = " → ".join(tier for _, tier in recent)
+                    st.caption(f"Confidence over last {len(recent)} updates: `{spark}`  ({tiers})")
                 if q["issues"]:
                     st.warning("Enrichment suggestions: " + "; ".join(q["issues"]))
                 st.json(e)
@@ -626,14 +634,53 @@ def render_knowledge_base():
 # Weekly Plan view (render existing + generate new)
 # ══════════════════════════════════════════════════════════════════════════════
 def render_weekly_plan():
+    from pipeline.weekly_progress import (
+        archived_weeks,
+        load_progress,
+        parse_checklist,
+        save_progress,
+        week_completion,
+    )
+
     st.title("Weekly Plan")
-    plan = load_recent_weekly_plan()
     last_jd = load_last_jd_report()
 
-    if plan:
-        st.markdown(plan)
-        st.markdown("---")
+    # ── Week selector ───────────────────────────────────────────────────────
+    weeks = archived_weeks()
+    options = ["Current (weekly_plan.md)"] + weeks
+    chosen = st.selectbox("Select week", options, key="weekly_plan_week")
 
+    if chosen == "Current (weekly_plan.md)":
+        plan = load_recent_weekly_plan()
+        week_key = ""  # current plan has no archive key, no checkboxes
+    else:
+        path = Path(OUTPUT_DIR) / f"weekly_plan_{chosen}.md"
+        plan = path.read_text(encoding="utf-8") if path.exists() else None
+        week_key = chosen
+
+    if plan and week_key:
+        items = parse_checklist(plan)
+        if items:
+            done, total = week_completion(week_key, plan)
+            pct = int((done / total) * 100) if total else 0
+            st.markdown(f"**{chosen}** — {done}/{total} tasks done ({pct}%)")
+            saved = load_progress().get(week_key, {})
+            for idx, text, baseline in items:
+                checked = saved.get(str(idx), baseline)
+                new_state = st.checkbox(text, value=checked, key=f"wkpl_{week_key}_{idx}")
+                if new_state != checked:
+                    save_progress(week_key, idx, new_state)
+                    st.rerun()
+            with st.expander("Full plan markdown"):
+                st.markdown(plan)
+        else:
+            st.markdown(plan)  # plan with no parseable tasks — just render
+    elif plan:
+        st.markdown(plan)
+    else:
+        st.caption(f"No plan saved for {chosen} yet.")
+
+    st.markdown("---")
     st.markdown("#### Generate a new plan")
     if not last_jd:
         st.info("Run a JD gap analysis first — the weekly plan needs your last JD report's priority gaps.")
@@ -745,17 +792,26 @@ def modal_convert():
     st.code(CPM_CHEAT_SHEET, language="text")
 
     text = st.text_area(
-        "Paste raw note OR upload a .txt file below",
+        "Paste raw note OR upload a .txt / .md file below",
         value=st.session_state.convert_text,
         height=240,
         key="modal_convert_text",
     )
-    uploaded = st.file_uploader("…or upload .txt", type="txt",
+    uploaded = st.file_uploader("…or upload .txt / .md", type=["txt", "md"],
                                 key="modal_convert_upload")
     if uploaded is not None:
         text = uploaded.read().decode("utf-8", errors="ignore")
         st.session_state.convert_filename = uploaded.name
     st.session_state.convert_text = text
+
+    # If this looks like a markdown note with frontmatter, extract metadata
+    # so the user (and Claude) can see what's pre-known. Pure read; we don't
+    # mutate st.session_state.convert_text here.
+    from pipeline.convert import parse_markdown_with_frontmatter
+    fm_meta, fm_body = parse_markdown_with_frontmatter(text)
+    if fm_meta:
+        st.caption("Detected frontmatter: " +
+                   " · ".join(f"`{k}={v}`" for k, v in fm_meta.items()))
 
     cols = st.columns(4)
     with cols[0]:
@@ -863,7 +919,17 @@ def modal_convert():
         Path(RAW_DIR, fname).write_text(text, encoding="utf-8")
         with st.spinner("Converting with Claude…"):
             try:
-                raw = convert_to_json(f"--- SOURCE: {fname} ---\n\n{text}")
+                # If frontmatter is present, hand Claude the metadata + body
+                # so any pre-known fields don't need to be re-inferred.
+                if fm_meta:
+                    hint_lines = "\n".join(f"{k}: {v}" for k, v in fm_meta.items())
+                    payload = (f"--- SOURCE: {fname} ---\n"
+                               f"--- KNOWN METADATA (use as-is, don't override) ---\n"
+                               f"{hint_lines}\n"
+                               f"--- NOTE BODY ---\n{fm_body}")
+                else:
+                    payload = f"--- SOURCE: {fname} ---\n\n{text}"
+                raw = convert_to_json(payload)
                 parsed, report = parse_and_save_json(raw)
                 st.success(f"Saved {len(parsed)} entries to {DATA_DIR}/structured.json")
                 if report["invalid_count"]:

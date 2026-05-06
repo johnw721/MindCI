@@ -27,7 +27,15 @@ For EACH skill gap above, generate exactly:
 Then generate a single 7-day execution plan covering both skills within {hours_per_week} hours.
 Be specific with days (Day 1, Day 2 etc.) and time estimates per task.
 
-Format clearly with headers for each skill and the weekly plan."""
+FORMATTING REQUIREMENT — every actionable item (hands-on project, blog idea,
+lab/tutorial, resume bullet, interview story, and each day's task in the
+plan) MUST be emitted as a markdown task list line:
+
+    - [ ] Item description (Day X, Yh)
+
+Use plain bullets (`- ` without `[ ]`) only for non-actionable context.
+Headers (`##`) and prose are fine. The task list lines will be parsed for
+completion tracking, so consistency matters."""
 
     _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
     return _text
