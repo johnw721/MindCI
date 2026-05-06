@@ -6,10 +6,12 @@ jd_reports/
 data/structured.json
 data/market_frequencies.json
 data/history/
+data/usage.json
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.ruff_cache/
 .vscode/
 Thumbs.db
 desktop.ini

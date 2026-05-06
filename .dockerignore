@@ -1,8 +1,14 @@
 # VCS / IDE
 .git
 .gitignore
+.github
 .vscode
 *.code-workspace
+
+# Dev / test / lint assets — not needed at runtime
+tests
+.pre-commit-config.yaml
+ruff.toml
 
 # Python noise
 __pycache__
@@ -12,12 +18,14 @@ __pycache__
 .Python
 .pytest_cache
 .mypy_cache
+.ruff_cache
 
 # Local secrets and runtime data — mounted as volumes, never baked into image
 .env
 data/structured.json
 data/history
 data/market_frequencies.json
+data/usage.json
 raw
 output
 jd_reports
