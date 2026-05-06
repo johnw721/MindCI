@@ -352,12 +352,20 @@ def render_dashboard():
     # API spend telemetry — recorded per call in pipeline/_client.py
     from pipeline._client import get_usage_summary
     usage = get_usage_summary(days=7)
+    cache = usage["cache"]
+    total_lookups = cache["hits"] + cache["misses"]
+    cache_str = (
+        f" · cache: {cache['hits']}/{total_lookups} hits "
+        f"({int(100 * cache['hits'] / total_lookups)}%)"
+        if total_lookups else ""
+    )
     st.caption(
         f"API today: **${usage['today']['cost_usd']:.2f}** "
         f"({usage['today']['calls']} call{'s' if usage['today']['calls'] != 1 else ''}, "
         f"{usage['today']['input_tokens'] + usage['today']['output_tokens']:,} tokens) · "
         f"7-day: **${usage['window']['cost_usd']:.2f}** "
         f"({usage['window']['calls']} calls)"
+        f"{cache_str}"
     )
 
 

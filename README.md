@@ -160,6 +160,8 @@ MINDCI_INPUT_PRICE_PER_MTOK=3.0
 MINDCI_OUTPUT_PRICE_PER_MTOK=15.0
 ```
 
+**Response cache.** Identical `(model, max_tokens, prompt)` calls hit a SHA-256-keyed on-disk cache (`data/response_cache.json`) and skip the API entirely. LRU eviction caps the file at 1,000 entries. Hit/miss counters are tracked in `usage.json` and the dashboard caption shows the live hit rate (e.g. `cache: 47/52 hits (90%)`). Disable per-call with `MINDCI_CACHE_DISABLE=1` for testing or to force a refresh.
+
 ---
 
 ## Configuration (env vars)
@@ -183,6 +185,7 @@ All env-overridable, sensible defaults in `config.py`.
 | `MINDCI_MAX_TOKENS_GENERATION` | `4096` | Flashcards, scenarios, weekly plan |
 | `MINDCI_INPUT_PRICE_PER_MTOK` | `3.0` | USD per million input tokens |
 | `MINDCI_OUTPUT_PRICE_PER_MTOK` | `15.0` | USD per million output tokens |
+| `MINDCI_CACHE_DISABLE` | unset | Set to bypass the response cache (forces every call through to the API) |
 
 ---
 
@@ -228,6 +231,7 @@ pytest tests/ -v
 - `test_confidence_history.py` — history append on tier change + cap at 20
 - `test_markdown_frontmatter.py` — frontmatter extraction (with/without, quoted values, malformed)
 - `test_weekly_progress.py` — checklist parser, save/load round-trip, completion stats
+- `test_response_cache.py` — hit-skips-API, prompt + max_tokens key isolation, `MINDCI_CACHE_DISABLE` bypass, LRU eviction at cap
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 
@@ -327,7 +331,8 @@ Two compounding loops:
 | `data/weekly_progress.json` | Per-task completion state for archived weekly plans (`{week: {task_idx: bool}}`) |
 | `data/invalid_entries.json` | Entries that failed validation |
 | `data/market_frequencies.json` | Aggregated JD skill frequencies |
-| `data/usage.json` | Daily API token + cost log |
+| `data/usage.json` | Daily API token + cost log + cumulative cache hits/misses |
+| `data/response_cache.json` | SHA-256-keyed response cache (LRU, capped at 1,000 entries) |
 | `data/history/` | Versioned KB snapshots (copy-on-write) |
 | `output/anki.csv` | Approved flashcards for Anki import |
 | `output/anki_rejected.csv` | Rejected flashcards |

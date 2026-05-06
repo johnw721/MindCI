@@ -53,6 +53,7 @@ def test_call_with_retry_records_usage_when_present(monkeypatch):
     """If response.usage exists, call_with_retry records it. If not, no crash."""
     import time
     monkeypatch.setattr(time, "sleep", lambda *_: None)
+    monkeypatch.setenv("MINDCI_CACHE_DISABLE", "1")  # focus this test on usage, not cache
     _clear_usage()
 
     class _Usage:
@@ -79,7 +80,10 @@ def test_call_with_retry_records_usage_when_present(monkeypatch):
     _client.call_with_retry("p2", max_tokens=64)
 
     data = json.loads(_client._usage_path().read_text(encoding="utf-8"))
-    row = next(iter(data.values()))
+    # Find the date-keyed row (skip the `_cache` bookkeeping row).
+    date_rows = [v for k, v in data.items() if not k.startswith("_")]
+    assert len(date_rows) == 1
+    row = date_rows[0]
     # Only the first call had usage; totals should be 40/60/1 (calls counts only recorded ones).
     assert row["input_tokens"]  == 40
     assert row["output_tokens"] == 60
