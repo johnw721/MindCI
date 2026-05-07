@@ -32,9 +32,6 @@ docker compose up --build   # then visit http://localhost:8501
 
 The app auto-loads your last generated flashcards or scenarios on startup so you can get straight to reviewing.
 
-<img width="1821" height="951" alt="image" src="https://github.com/user-attachments/assets/5c170517-e794-4c55-b843-f1c81a64db91" />
-
-
 ---
 
 ## Project Structure
@@ -95,8 +92,13 @@ The pipeline modules are imported directly by the Streamlit apps and the CLI —
 
 ## Dashboard (`app_dashboard.py`)
 
+<img width="1821" height="951" alt="image" src="https://github.com/user-attachments/assets/5c170517-e794-4c55-b843-f1c81a64db91" />
+
 **Sidebar nav:** Dashboard · Mock Interview · Knowledge Base · Weekly Plan · Topic Suggestions.
 **Quick actions** open as modals: New Note (Convert), Generate, Card Review, JD Analyzer.
+
+<img width="1817" height="950" alt="image" src="https://github.com/user-attachments/assets/05fde9cf-d99f-45ea-9211-81169013b4cb" />
+
 
 ### 1. Convert (modal)
 Two quality layers before the API call:
