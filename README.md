@@ -6,6 +6,9 @@ A personal knowledge pipeline for Cloud Engineers. Converts raw study notes into
 
 ## Setup
 
+![alt text](image.png)
+
+
 ```bash
 pip install -r requirements.txt
 ```
