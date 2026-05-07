@@ -32,6 +32,9 @@ docker compose up --build   # then visit http://localhost:8501
 
 The app auto-loads your last generated flashcards or scenarios on startup so you can get straight to reviewing.
 
+<img width="1821" height="951" alt="image" src="https://github.com/user-attachments/assets/5c170517-e794-4c55-b843-f1c81a64db91" />
+
+
 ---
 
 ## Project Structure
