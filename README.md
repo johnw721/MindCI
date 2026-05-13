@@ -73,6 +73,11 @@ MindCI/
 │   ├── project.txt
 │   ├── cert.txt
 │   └── explore.txt
+├── reminder_prompts/              # personal Claude-chat templates (gitignored, see Reminder Prompts section)
+│   ├── session_debrief.md
+│   ├── raw_note_capture.md
+│   ├── interview_postmortem.md
+│   └── weak_topic_drill.md
 ├── tests/                         # pytest suite (50 tests, runs in <1s)
 │   ├── conftest.py                # env stubbing + lazy-client monkeypatch
 │   ├── test_client_retry.py
@@ -260,6 +265,21 @@ pre-commit install
 ```
 
 Lint config in `ruff.toml` — pyflakes + import sorting + common style, ignores tuned to the codebase quirks.
+
+---
+
+## Reminder Prompts
+
+`reminder_prompts/` is a gitignored personal folder for reusable Claude-chat templates — prompts you paste into a fresh Claude conversation when you want a specific kind of output. The dashboard sidebar auto-discovers any `.md` or `.txt` file in the folder and surfaces them in a 📋 Reminder prompts expander; each prompt becomes a tab inside the expander with a built-in copy-to-clipboard button.
+
+Shipped templates (drop in, customize for your workflow):
+
+- **`session_debrief.md`** — paste at the end of a long Claude chat to extract individual CPM-marked study notes covering everything substantive that came up.
+- **`raw_note_capture.md`** — paste a rough technical thought; Claude rewrites it as a single CPM-marked note ready for `raw/` ingestion.
+- **`interview_postmortem.md`** — after a real or mock interview, capture the highest-signal moment as a structured project entry that will produce good scenarios later.
+- **`weak_topic_drill.md`** — Socratic 5-question drill on a topic you're weak in, with calibrated difficulty escalation and a per-question verdict.
+
+Adding more is friction-free: drop a new file into `reminder_prompts/` and it appears as a new tab automatically on the next dashboard render. Filename becomes the tab label (underscores → spaces).
 
 ---
 

@@ -280,6 +280,25 @@ with st.sidebar:
         st.session_state.active_modal = "jd"
 
     st.markdown("---")
+    # ── Reminder prompts ────────────────────────────────────────────────────
+    # Any .md / .txt file dropped into reminder_prompts/ shows up here as a
+    # tab inside the expander. `st.code` gives a built-in copy-to-clipboard
+    # button so you can grab the prompt and paste it into any Claude chat.
+    _prompt_files = sorted(Path("reminder_prompts").glob("*.md")) + \
+                    sorted(Path("reminder_prompts").glob("*.txt"))
+    if _prompt_files:
+        with st.expander("📋 Reminder prompts", expanded=False):
+            if len(_prompt_files) == 1:
+                p = _prompt_files[0]
+                st.caption(p.stem.replace("_", " "))
+                st.code(p.read_text(encoding="utf-8"), language="markdown")
+            else:
+                tabs = st.tabs([p.stem.replace("_", " ") for p in _prompt_files])
+                for tab, p in zip(tabs, _prompt_files):
+                    with tab:
+                        st.code(p.read_text(encoding="utf-8"), language="markdown")
+
+    st.markdown("---")
     _, _sidebar_source, _ = current_freqs()
     st.caption(f"Market data: {_sidebar_source}")
 
