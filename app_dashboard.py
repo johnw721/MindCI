@@ -278,6 +278,8 @@ with st.sidebar:
         st.session_state.active_modal = "review"
     if st.button("🎯 JD Analyzer", use_container_width=True):
         st.session_state.active_modal = "jd"
+    if st.button("📄 Resume Check", use_container_width=True):
+        st.session_state.active_modal = "resume"
 
     st.markdown("---")
     # ── Reminder prompts ────────────────────────────────────────────────────
@@ -367,6 +369,24 @@ def render_dashboard():
     cols[1].metric("Sessions", stats["total_sessions"] if stats else 0)
     cols[2].metric("Questions answered", stats["total_questions"] if stats else 0)
     cols[3].metric("JD reports", _dash_count)
+
+    # Resume coverage tile — only renders if a resume has been parsed
+    from pipeline.resume_check import compute_coverage, load_resume_claims
+    _claims = load_resume_claims()
+    if _claims:
+        _coverage = compute_coverage(_claims, kb)
+        t = _coverage["totals"]
+        gap = t["claims"] - t["covered"]
+        delta_str = f"-{gap} unbacked" if gap else "all backed"
+        st.markdown("#### Resume reality check")
+        st.metric(
+            "Resume claims backed by notes",
+            f"{t['covered']}/{t['claims']}",
+            delta=delta_str,
+            delta_color="inverse",
+        )
+        if gap:
+            st.caption("Open the **📄 Resume Check** modal in the sidebar to see specific gaps.")
 
     # API spend telemetry — recorded per call in pipeline/_client.py
     from pipeline._client import get_usage_summary
@@ -1345,6 +1365,103 @@ def modal_jd():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Modal: Resume Check
+# ══════════════════════════════════════════════════════════════════════════════
+@_dialog_decorator("📄 Resume reality check")
+def modal_resume():
+    """Upload a resume → extract claimed skills/projects/companies → diff against KB."""
+    from pipeline.resume_check import (
+        compute_coverage,
+        load_resume_claims,
+        parse_resume_to_claims,
+        save_resume_claims,
+    )
+
+    st.caption(
+        "Upload your resume as .txt or .md. Claude extracts the skills, "
+        "projects, and companies you claim; the system diffs them against your KB "
+        "and surfaces gaps — claims you can't back up with notes."
+    )
+
+    uploaded = st.file_uploader(
+        "Resume (.txt / .md)", type=["txt", "md"], key="m_resume_upload"
+    )
+
+    cols = st.columns(2)
+    with cols[0]:
+        do_parse = st.button("Parse & save claims", type="primary",
+                             key="m_resume_parse", disabled=uploaded is None)
+    with cols[1]:
+        do_recheck = st.button("Re-check coverage", key="m_resume_recheck")
+
+    if do_parse and uploaded is not None:
+        text = uploaded.read().decode("utf-8", errors="ignore")
+        with st.spinner("Asking Claude to extract claims…"):
+            try:
+                claims = parse_resume_to_claims(text)
+                save_resume_claims(claims)
+                st.success(
+                    f"Saved {len(claims.get('skills', []))} skills, "
+                    f"{len(claims.get('projects', []))} projects, "
+                    f"{len(claims.get('companies', []))} companies."
+                )
+            except Exception as e:
+                st.error(f"Parse failed: {e}")
+
+    claims = load_resume_claims()
+    if not claims:
+        st.info("No resume claims on file yet. Upload one above to begin.")
+        if st.button("Close", key="m_resume_close_empty"):
+            st.session_state.active_modal = None
+            st.rerun()
+        return
+
+    if do_recheck or claims:
+        kb = load_kb_safe()
+        coverage = compute_coverage(claims, kb)
+        t = coverage["totals"]
+        quality_badge(int(t["pct"] / 10), "coverage")
+        st.markdown(
+            f"**{t['covered']}/{t['claims']} claims backed by KB notes** ({t['pct']}%)"
+        )
+
+        for bucket_name, label in [
+            ("skills", "Skills"),
+            ("projects", "Projects"),
+            ("companies", "Companies"),
+        ]:
+            bucket = coverage[bucket_name]
+            if not (bucket["covered"] or bucket["missing"]):
+                continue
+            st.markdown(f"##### {label}")
+            if bucket["missing"]:
+                st.error(f"🚩 Missing notes ({len(bucket['missing'])})")
+                for item in bucket["missing"]:
+                    cols = st.columns([4, 1])
+                    cols[0].markdown(f"- **{item['claim']}**")
+                    if cols[1].button("Draft note", key=f"m_resume_draft_{bucket_name}_{item['claim']}"):
+                        st.session_state.convert_text = (
+                            f"#{item['claim'].lower().replace(' ', '-')}\n\n"
+                            f"[draft a note here covering what you actually know about {item['claim']}]\n\n"
+                            f"Confidence: Low\nDifficulty: Medium\n"
+                        )
+                        st.session_state.active_modal = "convert"
+                        st.rerun()
+            if bucket["covered"]:
+                with st.expander(f"✅ Backed by notes ({len(bucket['covered'])})"):
+                    for item in bucket["covered"]:
+                        match_str = ", ".join(item["matches"][:3]) + (
+                            f" (+{len(item['matches']) - 3} more)"
+                            if len(item["matches"]) > 3 else ""
+                        )
+                        st.markdown(f"- **{item['claim']}** ← {match_str}")
+
+    if st.button("Close", key="m_resume_close"):
+        st.session_state.active_modal = None
+        st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Main render dispatch
 # ══════════════════════════════════════════════════════════════════════════════
 if nav == "Dashboard":
@@ -1366,3 +1483,5 @@ elif st.session_state.active_modal == "review":
     modal_review()
 elif st.session_state.active_modal == "jd":
     modal_jd()
+elif st.session_state.active_modal == "resume":
+    modal_resume()

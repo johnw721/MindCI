@@ -156,6 +156,43 @@ def cmd_dashboard(_args) -> int:
     )
 
 
+# ── resume-check ──────────────────────────────────────────────────────────────
+def cmd_resume_check(args) -> int:
+    """Parse a resume file and print a coverage report against the current KB."""
+    from pipeline.resume_check import (
+        compute_coverage,
+        load_resume_claims,
+        parse_resume_to_claims,
+        save_resume_claims,
+    )
+    from utils import load_knowledge_base
+
+    if args.path:
+        text = Path(args.path).read_text(encoding="utf-8")
+        print(f"Parsing claims from {args.path}…")
+        claims = parse_resume_to_claims(text)
+        save_resume_claims(claims)
+    else:
+        claims = load_resume_claims()
+        if not claims:
+            print("No resume claims on file. Provide --path <resume.md> to parse one.")
+            return 1
+
+    kb = load_knowledge_base() or []
+    coverage = compute_coverage(claims, kb)
+    t = coverage["totals"]
+    print(f"\nResume coverage: {t['covered']}/{t['claims']} claims backed by KB ({t['pct']}%)")
+
+    for bucket_name in ("skills", "projects", "companies"):
+        bucket = coverage[bucket_name]
+        if not bucket["missing"]:
+            continue
+        print(f"\n  ✗ {bucket_name.upper()} — missing notes ({len(bucket['missing'])}):")
+        for item in bucket["missing"]:
+            print(f"    - {item['claim']}")
+    return 0
+
+
 # ── cache ─────────────────────────────────────────────────────────────────────
 def cmd_cache_stats(_args) -> int:
     """Show current response-cache size + hit rate."""
@@ -243,6 +280,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_cache_clear = sub.add_parser("cache-clear", help="delete the response cache file")
     p_cache_clear.set_defaults(func=cmd_cache_clear)
+
+    p_resume = sub.add_parser("resume-check",
+                              help="diff resume claims against the KB; --path to (re-)parse")
+    p_resume.add_argument("--path", type=str, default=None,
+                          help="path to a resume .md / .txt to parse (omit to recheck saved claims)")
+    p_resume.set_defaults(func=cmd_resume_check)
 
     return p
 

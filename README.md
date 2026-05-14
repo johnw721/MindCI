@@ -68,6 +68,7 @@ MindCI/
 │   ├── quality.py                 # CPM markers + cheat sheet, quality scoring, enrichment assistant, live preview
 │   ├── calibration.py             # adaptive auto_confidence from rolling interview history
 │   ├── weekly_progress.py         # parse `- [ ]` checkboxes from archived weekly plans, persist completion
+│   ├── resume_check.py            # diff resume claims (skills/projects/companies) against KB
 │   └── watcher.py                 # debounced raw/ filesystem watcher (used by `mindci watch`)
 ├── prompts/
 │   ├── project.txt
@@ -77,8 +78,9 @@ MindCI/
 │   ├── session_debrief.md
 │   ├── raw_note_capture.md
 │   ├── interview_postmortem.md
-│   └── weak_topic_drill.md
-├── tests/                         # pytest suite (50 tests, runs in <1s)
+│   ├── weak_topic_drill.md
+│   └── resume_claim_extraction.md
+├── tests/                         # pytest suite (57 tests, runs in <1s)
 │   ├── conftest.py                # env stubbing + lazy-client monkeypatch
 │   ├── test_client_retry.py
 │   ├── test_config.py
@@ -153,7 +155,14 @@ Reads last JD report, generates a 7-day execution plan for top 2 priority gaps. 
 ### 7. Topic Suggestions
 Compares KB against market frequency data. Three categories: uncovered high-demand topics, weak-but-in-demand, emerging. **Cold test button** on each item generates 3 questions from the topic name alone — tests whether the gap is knowledge or confidence before committing to a study session.
 
-### 8. Knowledge Base
+### 8. Resume Check (modal)
+Upload your resume as `.txt` or `.md`. Claude extracts your claimed **skills**, **projects**, and **companies** into `data/resume_claims.json` (one API call, cached). The system then diffs each claim against the current KB — substring match in either direction so `Lambda` matches `AWS Lambda` and vice versa — and groups results into ✅ backed and 🚩 missing per bucket.
+
+The dashboard shows a top-level **Resume reality check** tile: `7/12 claims backed by notes (58%)` with a delta indicator for unbacked claims. Each missing claim gets a one-click **Draft note** button that pre-fills the Convert modal with a starter template, closing the gap loop directly from the report.
+
+Re-checking is free after parsing once — the comparison is local Python with no API calls, so newly-added notes from any Convert run show up on the next render.
+
+### 9. Knowledge Base
 Filterable viewer by type and confidence (filter operates on the *effective* confidence — auto if set, else manual). Each entry shows a quality score badge with enrichment suggestions inline; raw JSON expandable. When `auto_confidence` differs from the manual seed, the header surfaces both with an `auto-updated` annotation and a timestamp inside the expander.
 
 **Confidence sparkline** — when an entry has a non-empty `confidence_history`, the expander shows a Unicode block-char sparkline of the last 8 tier transitions plus a textual `Low → Medium → High` trail. Capped at 20 transitions per entry; only appended when a tier actually changes (driven by `pipeline.calibration`).
@@ -215,6 +224,8 @@ python mindci.py dashboard            # launch streamlit dashboard
 python mindci.py watch                # watch raw/ and auto-convert on file drop
 python mindci.py cache-stats          # show response cache size + hit rate
 python mindci.py cache-clear          # delete the response cache file
+python mindci.py resume-check         # re-diff saved resume claims against current KB
+python mindci.py resume-check --path resume.md  # parse a fresh resume + diff
 
 python mindci.py generate --batch-size 4
 python mindci.py convert --no-archive   # leave notes in raw/ instead of archiving
@@ -233,7 +244,7 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 pytest tests/ -v
 ```
 
-50 deterministic tests, runs in well under a second. Coverage:
+57 deterministic tests, runs in well under a second. Coverage:
 
 - `test_validation.py` — Pydantic schemas, type rejection, normalization, warnings
 - `test_quality.py` — note quality scoring, KB entry scoring, type detection
@@ -248,6 +259,7 @@ pytest tests/ -v
 - `test_weekly_progress.py` — checklist parser, save/load round-trip, completion stats
 - `test_response_cache.py` — hit-skips-API, prompt + max_tokens key isolation, `MINDCI_CACHE_DISABLE` bypass, LRU eviction at cap
 - `test_integration_e2e.py` — cassette-style end-to-end: (1) raw note → convert → KB write → generate flashcards → parsable Q/A; (2) build interview pool → score answer → append session → `recalibrate_kb` flips `auto_confidence` Low → High and preserves the manual seed
+- `test_resume_check.py` — `_kb_candidates` field gathering, substring matching in both directions, coverage bucketing + totals, save/load round-trip
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 
@@ -278,6 +290,7 @@ Shipped templates (drop in, customize for your workflow):
 - **`raw_note_capture.md`** — paste a rough technical thought; Claude rewrites it as a single CPM-marked note ready for `raw/` ingestion.
 - **`interview_postmortem.md`** — after a real or mock interview, capture the highest-signal moment as a structured project entry that will produce good scenarios later.
 - **`weak_topic_drill.md`** — Socratic 5-question drill on a topic you're weak in, with calibrated difficulty escalation and a per-question verdict.
+- **`resume_claim_extraction.md`** — manual alternative to the Resume Check modal: extracts `{skills, projects, companies}` from a resume in any Claude chat. Output can be saved as `data/resume_claims.json` to feed the dashboard.
 
 Adding more is friction-free: drop a new file into `reminder_prompts/` and it appears as a new tab automatically on the next dashboard render. Filename becomes the tab label (underscores → spaces).
 
@@ -364,6 +377,7 @@ Two compounding loops:
 | `data/market_frequencies.json` | Aggregated JD skill frequencies |
 | `data/usage.json` | Daily API token + cost log + cumulative cache hits/misses |
 | `data/response_cache.json` | SHA-256-keyed response cache (LRU, capped at 1,000 entries) |
+| `data/resume_claims.json` | Resume-extracted claims (`{skills, projects, companies}`) used by the Resume Check feature |
 | `data/history/` | Versioned KB snapshots (copy-on-write) |
 | `output/anki.csv` | Approved flashcards for Anki import |
 | `output/anki_rejected.csv` | Rejected flashcards |

@@ -28,6 +28,7 @@ data/market_frequencies.json
 data/usage.json
 data/weekly_progress.json
 data/response_cache.json
+data/resume_claims.json
 raw
 output
 jd_reports
