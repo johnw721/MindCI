@@ -28,6 +28,27 @@ def _strip_fences(text):
     return clean.strip()
 
 
+def fetch_url_as_markdown(url: str, reader_base: str | None = None, timeout: int = 30) -> str:
+    """Fetch a URL via the configured reader service and return clean markdown.
+
+    Defaults to Jina Reader (https://r.jina.ai/) which strips boilerplate and
+    returns LLM-ready markdown for any public URL. Override the endpoint with
+    `MINDCI_READER_URL` for a self-hosted Trafilatura/Readability fallback.
+    """
+    import urllib.request
+
+    base = reader_base or os.environ.get("MINDCI_READER_URL", "https://r.jina.ai/")
+    if not base.endswith("/"):
+        base += "/"
+    req = urllib.request.Request(base + url,
+                                 headers={"User-Agent": "MindCI/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8", errors="replace").strip()
+    if not body:
+        raise ValueError(f"Reader returned empty body for {url}")
+    return body
+
+
 def parse_markdown_with_frontmatter(content: str) -> tuple[dict, str]:
     """Extract YAML-style frontmatter from a markdown file.
     Returns (metadata_dict, body_text). If no frontmatter, returns ({}, content).

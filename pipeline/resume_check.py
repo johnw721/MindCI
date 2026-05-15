@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from config import DATA_DIR, MAX_TOKENS_ANALYSIS
+from config import DATA_DIR, MAX_TOKENS_ANALYSIS, MODEL_FAST
 from pipeline._client import call_with_retry
 
 CLAIMS_PATH = Path(DATA_DIR) / "resume_claims.json"
@@ -59,9 +59,10 @@ def _strip_fences(text: str) -> str:
 
 
 def parse_resume_to_claims(resume_text: str) -> dict:
-    """One LLM call that turns resume text into a `{skills, projects, companies}` dict."""
+    """One LLM call that turns resume text into a `{skills, projects, companies}` dict.
+    Uses the fast tier — this is structured extraction, not reasoning."""
     prompt = PARSE_PROMPT.format(resume_text=resume_text)
-    raw = call_with_retry(prompt, max_tokens=MAX_TOKENS_ANALYSIS)
+    raw = call_with_retry(prompt, max_tokens=MAX_TOKENS_ANALYSIS, model=MODEL_FAST)
     return json.loads(_strip_fences(raw))
 
 

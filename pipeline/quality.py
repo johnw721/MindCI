@@ -1,6 +1,6 @@
 import os
 
-from config import MAX_TOKENS_GRADE, MAX_TOKENS_REVIEW, MIN_WORD_COUNT, QUALITY_SIGNALS
+from config import MAX_TOKENS_GRADE, MAX_TOKENS_REVIEW, MIN_WORD_COUNT, MODEL_FAST, QUALITY_SIGNALS
 from pipeline._client import call_with_retry
 
 # ── Cognitive Payload Markers (CPM) ───────────────────────────────────────────
@@ -207,7 +207,7 @@ Focus only on what is genuinely missing -- do not ask about things already cover
 Return ONLY a JSON array of question strings, no markdown, no extra text:
 ["question 1", "question 2", "question 3", "question 4"]"""
 
-    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GRADE)
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_GRADE, model=MODEL_FAST)
     raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -285,7 +285,7 @@ Return ONLY a single JSON object (not an array), no markdown:
   "detected_markers": ["#tag1", "→", "🧠", "!"]
 }}"""
 
-    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_REVIEW)
+    _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_REVIEW, model=MODEL_FAST)
     raw = _text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]

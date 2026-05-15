@@ -6,6 +6,25 @@ from config import MAX_TOKENS_GENERATION, OUTPUT_DIR
 from pipeline._client import call_with_retry
 from pipeline.calibration import effective_confidence
 
+
+def guess_extension(code: str) -> tuple[str, str]:
+    """Return (extension, mime) for a code/config blob. Heuristic, not strict.
+
+    Detects the most common cloud-engineer artifacts: Terraform, Kubernetes
+    YAML, Python, JSON. Falls back to plain .txt for unknown content.
+    """
+    sample = (code or "")[:300].lower()
+    if "resource " in sample or "provider " in sample or "variable " in sample or "terraform {" in sample:
+        return ("tf", "text/plain")
+    if "apiversion:" in sample or "kind:" in sample or sample.lstrip().startswith("---\n"):
+        return ("yaml", "text/yaml")
+    if "def " in sample or "import " in sample or sample.lstrip().startswith("from "):
+        return ("py", "text/x-python")
+    if sample.lstrip().startswith("{") or sample.lstrip().startswith("["):
+        return ("json", "application/json")
+    return ("txt", "text/plain")
+
+
 # Scenario generation logic
 
 SCENARIO_TYPES = {

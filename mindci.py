@@ -221,6 +221,31 @@ def cmd_cache_clear(_args) -> int:
     return 0
 
 
+# ── capture ───────────────────────────────────────────────────────────────────
+def cmd_capture(args) -> int:
+    """Append a one-liner thought to RAW_DIR as a timestamped .txt file.
+
+    If `mindci watch` is running, the new file is picked up within seconds
+    and auto-converted. This removes the context-switch of opening a file or
+    the dashboard mid-task.
+    """
+    from config import RAW_DIR
+
+    text = " ".join(args.text).strip()
+    if not text:
+        print("No text provided. Usage: python mindci.py capture \"<note text>\"")
+        return 1
+
+    raw_dir = Path(RAW_DIR)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = args.name or f"capture_{timestamp}"
+    path = raw_dir / f"{name}.txt"
+    path.write_text(text + "\n", encoding="utf-8")
+    print(f"  ✓ captured → {path}")
+    return 0
+
+
 # ── watch ─────────────────────────────────────────────────────────────────────
 def cmd_watch(args) -> int:
     """Watch RAW_DIR and auto-convert when .txt files settle."""
@@ -286,6 +311,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_resume.add_argument("--path", type=str, default=None,
                           help="path to a resume .md / .txt to parse (omit to recheck saved claims)")
     p_resume.set_defaults(func=cmd_resume_check)
+
+    p_cap = sub.add_parser("capture", help="drop a quick thought into raw/ as a timestamped .txt")
+    p_cap.add_argument("text", nargs="+", help="the note text (quote if it contains shell-special chars)")
+    p_cap.add_argument("--name", type=str, default=None,
+                       help="custom filename (without extension); defaults to capture_<timestamp>")
+    p_cap.set_defaults(func=cmd_capture)
 
     return p
 

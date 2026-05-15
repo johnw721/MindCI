@@ -106,7 +106,8 @@ MIN_WORD_COUNT = 50
 # ── Anthropic call configuration (env-overridable) ────────────────────────────
 # One choke point for the model name and a small set of named token caps.
 # Sized to use case so a model upgrade or budget adjustment is one env var.
-MODEL = os.environ.get("MINDCI_MODEL", "claude-sonnet-4-6")
+MODEL      = os.environ.get("MINDCI_MODEL",      "claude-sonnet-4-6")
+MODEL_FAST = os.environ.get("MINDCI_MODEL_FAST", "claude-haiku-4-5-20251001")  # cheaper/faster tier for low-reasoning tasks
 
 MAX_TOKENS_GRADE      = int(os.environ.get("MINDCI_MAX_TOKENS_GRADE",       512))   # interview grading
 MAX_TOKENS_REVIEW     = int(os.environ.get("MINDCI_MAX_TOKENS_REVIEW",     1024))   # preview, enrichment, rewrite

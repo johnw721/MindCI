@@ -71,6 +71,7 @@ MindCI/
 │   ├── calibration.py             # adaptive auto_confidence from rolling interview history
 │   ├── weekly_progress.py         # parse `- [ ]` checkboxes from archived weekly plans, persist completion
 │   ├── resume_check.py            # diff resume claims (skills/projects/companies) against KB
+│   ├── anki_sync.py               # AnkiConnect bridge — push approved cards directly to Anki
 │   └── watcher.py                 # debounced raw/ filesystem watcher (used by `mindci watch`)
 ├── prompts/
 │   ├── project.txt
@@ -82,7 +83,7 @@ MindCI/
 │   ├── interview_postmortem.md
 │   ├── weak_topic_drill.md
 │   └── resume_claim_extraction.md
-├── tests/                         # pytest suite (59 tests, runs in <1s)
+├── tests/                         # pytest suite (74 tests, runs in <1s)
 │   ├── conftest.py                # env stubbing + lazy-client monkeypatch
 │   ├── test_client_retry.py
 │   ├── test_config.py
@@ -123,6 +124,8 @@ After commit, Claude structures notes into `data/structured.json` by type: `proj
 
 **Markdown + frontmatter ingest** — the file uploader accepts both `.txt` and `.md`. If a `.md` file starts with a YAML-style `---` frontmatter block (top-level `key: value` pairs, no nested structures), `pipeline.convert.parse_markdown_with_frontmatter` extracts it and surfaces a "Detected frontmatter" caption. Detected metadata is handed to Claude as a `KNOWN METADATA` hint so pre-known fields (type, confidence, difficulty, etc.) don't get re-inferred and tokens are saved. Drag Obsidian notes in directly — no `.txt` conversion required.
 
+**URL ingest via Jina Reader** — paste a URL (docs page, blog post, AWS announcement) and click *Fetch*. `pipeline.convert.fetch_url_as_markdown` calls the Jina Reader endpoint (`https://r.jina.ai/<URL>`), which strips boilerplate and returns clean LLM-ready markdown. The text auto-populates the Convert text area, then runs through the normal pipeline. Override the reader endpoint with `MINDCI_READER_URL` (point at a self-hosted Trafilatura/Readability service if Jina goes paywalled). Stdlib-only — no new dependency.
+
 ### 2. Generate (modal)
 Three sub-modes with type and confidence filters:
 
@@ -134,6 +137,10 @@ Three sub-modes with type and confidence filters:
 
 ### 3. Card Review (modal)
 Approve / reject / skip flow for flashcards (flip mechanic) and scenarios (rendered setup + code + question). Approved → `output/anki.csv`, rejected → `output/anki_rejected.csv`.
+
+**Direct Anki sync via AnkiConnect** — if [AnkiConnect](https://foosoft.net/projects/anki-connect/) is installed and Anki is running, every approved flashcard is pushed straight to your deck (default deck name `MindCI`, override via `MINDCI_ANKI_DECK`). The CSV is still written as a fallback. The probe is one-shot per session, so the dashboard quietly degrades to CSV-only when Anki is closed.
+
+**Code download buttons** — every code/config block in scenarios and mock interview questions gets a `⬇ Download as .X` button beneath it. Heuristic detection picks the right extension (`.tf` for Terraform, `.yaml` for K8s manifests, `.py` for Python, `.json` for JSON, `.txt` fallback) so you can drop it straight into your editor and start hands-on practice.
 
 ### 4. JD Analyzer (modal)
 **Single** — readiness score 0-100, skill coverage, priority gaps with one-line recommendations, strengths to lead with.
@@ -219,6 +226,11 @@ All env-overridable, sensible defaults in `config.py`.
 | `MINDCI_INPUT_PRICE_PER_MTOK` | `3.0` | USD per million input tokens |
 | `MINDCI_OUTPUT_PRICE_PER_MTOK` | `15.0` | USD per million output tokens |
 | `MINDCI_CACHE_DISABLE` | unset | Set to bypass the response cache (forces every call through to the API) |
+| `MINDCI_MODEL_FAST` | `claude-haiku-4-5-20251001` | Fast/cheap tier used for low-reasoning tasks (resume parsing, enrichment questions, preview) |
+| `MINDCI_READER_URL` | `https://r.jina.ai/` | Reader endpoint for URL ingest (override for self-hosted Trafilatura/Readability) |
+| `MINDCI_ANKI_URL` | `http://localhost:8765` | AnkiConnect endpoint |
+| `MINDCI_ANKI_DECK` | `MindCI` | Deck name approved cards push to |
+| `MINDCI_ANKI_MODEL` | `Basic` | Anki note type for pushed cards |
 
 ---
 
@@ -233,6 +245,8 @@ python mindci.py generate             # KB → output/anki.csv + questions.md
 python mindci.py aggregate            # rebuild data/market_frequencies.json
 python mindci.py dashboard            # launch streamlit dashboard
 python mindci.py watch                # watch raw/ and auto-convert on file drop
+python mindci.py capture "Gotcha: AWS Lambda cold-start circular imports #aws"
+                                       # drop a one-liner into raw/ instantly
 python mindci.py cache-stats          # show response cache size + hit rate
 python mindci.py cache-clear          # delete the response cache file
 python mindci.py resume-check         # re-diff saved resume claims against current KB
@@ -245,6 +259,8 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 
 `watch` uses `watchdog` with a 2.5s debounce, so editor "atomic save" sequences trigger only one convert run. Drop a `.txt` into `raw/` from anywhere (Dropbox/Drive sync, mobile shortcut, scp) and it's structured and indexed within seconds.
 
+`capture` pairs with `watch` for terminal-native note-taking. Run `mindci.py capture "your one-liner"` from any shell and it writes a timestamped `capture_YYYYMMDD_HHMMSS.txt` into `raw/`. If `watch` is running in another terminal, the convert pipeline kicks in within seconds. Use `--name <slug>` to set a custom filename instead of the timestamp. Removes the context-switching cost of opening a file or the dashboard mid-task — capture the thought, keep coding.
+
 `run_pipeline.py` is a thin alias for `mindci.py run`.
 
 ---
@@ -255,7 +271,7 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 pytest tests/ -v
 ```
 
-59 deterministic tests, runs in well under a second. Coverage:
+74 deterministic tests, runs in well under a second. Coverage:
 
 - `test_validation.py` — Pydantic schemas, type rejection, normalization, warnings
 - `test_quality.py` — note quality scoring, KB entry scoring, type detection
@@ -271,6 +287,10 @@ pytest tests/ -v
 - `test_response_cache.py` — hit-skips-API, prompt + max_tokens key isolation, `MINDCI_CACHE_DISABLE` bypass, LRU eviction at cap
 - `test_integration_e2e.py` — cassette-style end-to-end: (1) raw note → convert → KB write → generate flashcards → parsable Q/A; (2) build interview pool → score answer → append session → `recalibrate_kb` flips `auto_confidence` Low → High and preserves the manual seed; (3) JD analysis with `resume_claims` includes the resume block in the prompt and returns the four-way bucketing; (4) JD analysis without resume falls back to the original schema
 - `test_resume_check.py` — `_kb_candidates` field gathering, substring matching in both directions, coverage bucketing + totals, save/load round-trip
+- `test_url_ingest.py` — Jina prefix prepending, `MINDCI_READER_URL` override, empty-body error
+- `test_anki_sync.py` — `is_available` true/false paths, `addNote` JSON-RPC payload shape, error-response surfacing
+- `test_code_download.py` — language detection (Terraform / YAML / Python / JSON / fallback)
+- `test_capture.py` — `mindci.py capture` writes timestamped file, honors `--name`, rejects empty input
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 

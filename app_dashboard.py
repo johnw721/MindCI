@@ -242,16 +242,35 @@ def quality_badge(score, label="quality"):
     )
 
 
+def _code_download_button(code: str, label_seed: str, key_suffix: str):
+    """Add a download button for a code/config blob, with a sane filename + ext."""
+    from pipeline.scenarios import guess_extension
+    ext, mime = guess_extension(code)
+    safe = "".join(c if c.isalnum() else "_" for c in label_seed.lower())[:40] or "snippet"
+    st.download_button(
+        label=f"⬇ Download as .{ext}",
+        data=code,
+        file_name=f"{safe}.{ext}",
+        mime=mime,
+        key=f"dl_{key_suffix}",
+    )
+
+
 def render_scenario_card(card):
     """Shared renderer for scenario cards (single or multi-file)."""
     if card.get("setup"):
         st.markdown(f"**Setup:** {card['setup']}")
+    card_id = str(card.get("id", id(card)))
     if card.get("files"):
-        for f in card["files"]:
-            st.markdown(f"**`{f.get('name', 'file')}`**")
+        for i, f in enumerate(card["files"]):
+            fname = f.get("name", "file")
+            st.markdown(f"**`{fname}`**")
             st.code(f.get("content", ""), language="text")
+            _code_download_button(f.get("content", ""), fname, f"sc_{card_id}_{i}")
     elif card.get("code"):
         st.code(card["code"], language="text")
+        _code_download_button(card["code"], card.get("topic") or "scenario",
+                              f"sc_{card_id}")
     if card.get("question"):
         st.markdown(f"**Q:** {card['question']}")
 
@@ -457,11 +476,14 @@ def render_mock_interview():
         if q.get("setup"):
             st.markdown(f"**Setup:** {q['setup']}")
         if q.get("files"):
-            for f in q["files"]:
-                st.markdown(f"**`{f.get('name','file')}`**")
-                st.code(f.get("content",""), language="text")
+            for fi, f in enumerate(q["files"]):
+                fname = f.get("name", "file")
+                st.markdown(f"**`{fname}`**")
+                st.code(f.get("content", ""), language="text")
+                _code_download_button(f.get("content", ""), fname, f"iv_{idx}_{fi}")
         elif q.get("code"):
             st.code(q["code"], language="text")
+            _code_download_button(q["code"], q.get("topic") or "interview", f"iv_{idx}")
         st.markdown(f"**Q:** {q['question']}")
 
         if st.session_state.iv_graded is None:
@@ -851,6 +873,27 @@ def modal_convert():
         st.session_state.convert_filename = uploaded.name
     st.session_state.convert_text = text
 
+    # ── URL ingest via Jina Reader ──────────────────────────────────────────
+    url_cols = st.columns([5, 1])
+    url_input = url_cols[0].text_input(
+        "…or paste a URL (docs page, blog post, AWS announcement)",
+        placeholder="https://aws.amazon.com/blogs/...",
+        key="modal_convert_url",
+    )
+    if url_cols[1].button("Fetch", key="m_conv_fetch_url",
+                          disabled=not url_input.strip()):
+        from pipeline.convert import fetch_url_as_markdown
+        with st.spinner(f"Fetching {url_input}…"):
+            try:
+                fetched = fetch_url_as_markdown(url_input.strip())
+                st.session_state.convert_text = fetched
+                st.session_state.convert_filename = url_input.strip()
+                text = fetched
+                st.success(f"Fetched {len(fetched):,} chars. Click Convert & save when ready.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Fetch failed: {e}")
+
     # If this looks like a markdown note with frontmatter, extract metadata
     # so the user (and Claude) can see what's pre-known. Pure read; we don't
     # mutate st.session_state.convert_text here.
@@ -1199,10 +1242,25 @@ def modal_review():
                 st.session_state.review_show_answer = True
                 st.rerun()
 
+    # Cache AnkiConnect availability per session — avoid spamming the probe.
+    if "anki_available" not in st.session_state:
+        from pipeline.anki_sync import is_available as _anki_available
+        st.session_state.anki_available = _anki_available()
+    if st.session_state.anki_available and kind == "Flashcards":
+        st.caption("🟢 Anki detected — approved flashcards will auto-push to your deck.")
+
     cols = st.columns(3)
     with cols[0]:
         if st.button("✅ Approve", key="m_rev_approve"):
             card["status"] = "approved"
+            # Best-effort Anki push for flashcards. Failures fall through to CSV.
+            if st.session_state.anki_available and kind == "Flashcards":
+                try:
+                    from pipeline.anki_sync import push_card
+                    tags = [t for t in (card.get("tags") or "").split("::") if t]
+                    push_card(card["question"], card["answer"], tags=tags)
+                except Exception as e:
+                    st.warning(f"Anki push failed (still saved to CSV): {e}")
             st.session_state.review_idx += 1
             st.session_state.review_show_answer = False
             st.rerun()
