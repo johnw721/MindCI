@@ -21,11 +21,11 @@ Then it builds a weekly plan with hands-on projects, blog topics, and resume bul
 
 ## How it works (the simple version)
 
-1. **Drop notes into a folder** – plain text, markdown, even Obsidian files with frontmatter.
+1. **Drop notes in.** Plain text, markdown, Obsidian files with frontmatter, or paste a URL (an AWS blog post, a docs page) and MindCI fetches and structures it. From the terminal: `mindci.py capture "Lambda cold start fails on circular imports #aws"` writes it straight to the watch folder.
 2. **MindCI converts them** into structured knowledge (project, certification, or exploration).
-3. **Generate flashcards or scenario questions.** Review them in the dashboard or export to Anki.
-4. **Mock interview** – MindCI picks questions from your knowledge base, grades your answers, and adjusts each topic's difficulty for next time.
-5. **Paste job descriptions** – MindCI shows you where your resume and knowledge don't match the market, then builds a weekly plan.
+3. **Generate flashcards or scenario questions.** Review them in the dashboard, export to Anki via CSV, or — if you have AnkiConnect installed — push approved cards directly into your Anki deck with one click. Code blocks come with download buttons so you can drop a Terraform/K8s/Python snippet straight into your editor.
+4. **Mock interview** – MindCI picks questions from your knowledge base, grades your answers, and adjusts each topic's difficulty for next time. Mid-session refresh? It picks up where you left off.
+5. **Paste job descriptions** – MindCI shows you the four-way picture: what you know AND claim AND the JD wants (lead with), what you claim but can't back up (the interview-killer category), what you know but didn't put on your resume (add it), and true gaps to study. Then it builds a weekly plan.
 
 All of this runs on your own computer (or in Docker). You need an Anthropic API key for the AI parts.
 
@@ -39,7 +39,9 @@ All of this runs on your own computer (or in Docker). You need an Anthropic API 
 
 - **Auto-confidence** – After each mock interview, MindCI lowers the difficulty for topics you struggled with and raises it for topics you aced. Next round's questions fit you better.
 - **Market frequencies** – After you analyze a few job descriptions, MindCI starts weighting topic suggestions by what employers actually ask for.
-- **Resume reality check** – Upload your resume once. MindCI extracts what you claimed, compares it to your notes, and highlights claims you can't back up. One click drafts a study note for each gap.
+- **Resume reality check** – Upload your resume once. MindCI extracts what you claimed, compares it to your notes, and highlights claims you can't back up. One click drafts a study note for each gap. Every JD analysis after that is a three-way diff: resume × KB × JD.
+- **Tier routing** – Trivial structuring tasks (resume parsing, preview extraction, enrichment questions) automatically use the cheaper, faster Haiku model. High-reasoning work (mock interview grading, scenario generation, JD analysis) stays on Sonnet. Cuts your spend without you tuning anything.
+- **Response cache** – Re-running the same analysis (same JD pasted twice, same note re-converted) returns instantly from a local cache. Hit rate is visible in the dashboard footer.
 
 ## What it looks like
 
@@ -57,4 +59,4 @@ The dashboard runs in your browser (Streamlit). You get:
 
 ## The long version
 
-If you want all the technical details – file structure, CLI commands, 59 tests, CPM markers, confidence sparklines, and the exact hysteresis algorithm – read the [full README](README.md). But you don't need any of that to start using it.
+If you want all the technical details – file structure, CLI commands, 74 tests, CPM markers, confidence sparklines, and the exact hysteresis algorithm – read the [full README](README.md). But you don't need any of that to start using it.
