@@ -1,5 +1,7 @@
 # MindCI
 
+> **New here?** Read [OVERVIEW.md](OVERVIEW.md) first — it's the user-friendly tour. This README is the technical reference.
+
 A personal knowledge pipeline for Cloud Engineers. Converts raw study notes into structured flashcards and interview scenarios, maps your skills against real job descriptions, simulates graded mock interviews, tracks score progression over time, and tells you what to learn next.
 
 ---
