@@ -80,7 +80,7 @@ MindCI/
 │   ├── interview_postmortem.md
 │   ├── weak_topic_drill.md
 │   └── resume_claim_extraction.md
-├── tests/                         # pytest suite (57 tests, runs in <1s)
+├── tests/                         # pytest suite (59 tests, runs in <1s)
 │   ├── conftest.py                # env stubbing + lazy-client monkeypatch
 │   ├── test_client_retry.py
 │   ├── test_config.py
@@ -138,6 +138,15 @@ Approve / reject / skip flow for flashcards (flip mechanic) and scenarios (rende
 
 **Batch** — multiple JDs separated by `---` or uploaded as a `.txt`. Aggregate view: most common gaps, consistent strengths, average readiness, best-fit role. Auto-saves to `jd_reports/` and triggers `aggregate_jd_frequencies.py`.
 
+**Three-way bucketing (when a resume is on file).** If `data/resume_claims.json` exists (created via the Resume Check modal), every JD analysis additionally classifies each domain across JD ⨯ Resume ⨯ KB:
+
+- ✅ **Strengths to lead with** — on resume + in KB + on JD. Highest interview leverage.
+- 🚩 **Exposures** — on resume + on JD, *not* in KB. You've claimed it; you'll be probed; you can't back it up. The category that ends interviews.
+- 💡 **Hidden assets** — in KB + on JD, *not* on resume. You know it but didn't claim it; add it.
+- **Priority gaps** — on JD only. True study targets.
+
+The batch analyzer adds a `cross_jd_exposures` field listing claimed-but-unbacked skills that recur across multiple JDs in your active search — those are the highest-priority study targets system-wide. Falls back to the original single-bucket schema when no resume is on file; no behavior change for existing users.
+
 After either mode, if no weekly plan exists for the current ISO week, one is auto-generated from the priority gaps and saved to both `output/weekly_plan.md` (canonical) and `output/weekly_plan_YYYY-WNN.md` (archive).
 
 ### 5. Mock Interview (sidebar view)
@@ -175,7 +184,7 @@ Every API call goes through `pipeline/_client.call_with_retry`, which records to
 
 > API today: **$0.42** (8 calls, 12,304 tokens) · 7-day: **$2.18** (54 calls)
 
-Pricing is configurable via env vars (defaults track Claude Sonnet 4.5 list pricing — $3/MTok input, $15/MTok output):
+Pricing is configurable via env vars (defaults are placeholders — verify against Anthropic's current list pricing for the active model and override if needed):
 
 ```
 MINDCI_INPUT_PRICE_PER_MTOK=3.0
@@ -199,7 +208,7 @@ All env-overridable, sensible defaults in `config.py`.
 | `MINDCI_RAW_DIR` | `raw` | Drop-zone for `.txt` notes |
 | `MINDCI_JD_REPORTS_DIR` | `jd_reports` | Saved JD analyses for aggregation |
 | `MINDCI_LOG_LEVEL` | `INFO` | stdout log level |
-| `MINDCI_MODEL` | `claude-sonnet-4-5` | Anthropic model id used by every call |
+| `MINDCI_MODEL` | `claude-sonnet-4-6` | Anthropic model id used by every call |
 | `MINDCI_MAX_TOKENS_GRADE` | `512` | Interview grading + enrichment questions |
 | `MINDCI_MAX_TOKENS_REVIEW` | `1024` | Preview, enrichment, rewrite |
 | `MINDCI_MAX_TOKENS_ANALYSIS` | `2048` | Gap analysis, suggestions |
@@ -244,7 +253,7 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 pytest tests/ -v
 ```
 
-57 deterministic tests, runs in well under a second. Coverage:
+59 deterministic tests, runs in well under a second. Coverage:
 
 - `test_validation.py` — Pydantic schemas, type rejection, normalization, warnings
 - `test_quality.py` — note quality scoring, KB entry scoring, type detection
@@ -258,7 +267,7 @@ pytest tests/ -v
 - `test_markdown_frontmatter.py` — frontmatter extraction (with/without, quoted values, malformed)
 - `test_weekly_progress.py` — checklist parser, save/load round-trip, completion stats
 - `test_response_cache.py` — hit-skips-API, prompt + max_tokens key isolation, `MINDCI_CACHE_DISABLE` bypass, LRU eviction at cap
-- `test_integration_e2e.py` — cassette-style end-to-end: (1) raw note → convert → KB write → generate flashcards → parsable Q/A; (2) build interview pool → score answer → append session → `recalibrate_kb` flips `auto_confidence` Low → High and preserves the manual seed
+- `test_integration_e2e.py` — cassette-style end-to-end: (1) raw note → convert → KB write → generate flashcards → parsable Q/A; (2) build interview pool → score answer → append session → `recalibrate_kb` flips `auto_confidence` Low → High and preserves the manual seed; (3) JD analysis with `resume_claims` includes the resume block in the prompt and returns the four-way bucketing; (4) JD analysis without resume falls back to the original schema
 - `test_resume_check.py` — `_kb_candidates` field gathering, substring matching in both directions, coverage bucketing + totals, save/load round-trip
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.

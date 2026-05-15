@@ -15,16 +15,18 @@ from pathlib import Path
 
 import pytest
 
-from pipeline import _client, calibration, convert, generate, interview
+from pipeline import _client, calibration, convert, generate, interview, jd_analyzer
 
 
 def _stub_responses(monkeypatch, responses):
     """Replace call_with_retry with a generator yielding canned strings.
     `responses` is a list of strings (or callables taking the prompt) returned
-    in order on each call_with_retry invocation."""
-    state = {"i": 0}
+    in order on each call_with_retry invocation. Also captures the prompts
+    that were passed in for assertions about prompt content."""
+    state = {"i": 0, "prompts": []}
 
     def fake(prompt, *, max_tokens, model=None):
+        state["prompts"].append(prompt)
         i = state["i"]
         state["i"] = i + 1
         r = responses[i] if i < len(responses) else responses[-1]
@@ -32,9 +34,11 @@ def _stub_responses(monkeypatch, responses):
 
     monkeypatch.setattr(_client, "call_with_retry", fake)
     # Also patch the per-module imports (they imported `call_with_retry` by name).
-    monkeypatch.setattr(convert,  "call_with_retry", fake)
-    monkeypatch.setattr(generate, "call_with_retry", fake)
-    monkeypatch.setattr(interview, "call_with_retry", fake)
+    monkeypatch.setattr(convert,     "call_with_retry", fake)
+    monkeypatch.setattr(generate,    "call_with_retry", fake)
+    monkeypatch.setattr(interview,   "call_with_retry", fake)
+    monkeypatch.setattr(jd_analyzer, "call_with_retry", fake)
+    return state
 
 
 # ── (1) Convert → Generate flow ───────────────────────────────────────────────
@@ -155,6 +159,72 @@ def test_interview_pool_score_and_recalibrate_round_trip(monkeypatch, tmp_path):
     assert written[0]["auto_confidence"]      == "High"
     assert written[0]["confidence"]           == "Low"      # manual seed preserved
     assert written[0]["confidence_history"]   == [[written[0]["confidence_updated_at"], "High"]]
+
+
+# ── (3) JD analysis with resume claims → three-way bucketing ──────────────────
+def test_jd_analysis_with_resume_claims_includes_resume_block_and_buckets(monkeypatch):
+    """When resume_claims is passed, the prompt must include the CANDIDATE RESUME
+    CLAIMS block, the schema must request the new buckets, and the response must
+    be parsed and returned with all four buckets accessible."""
+    kb = [
+        {"type": "exploration", "tool": "Karpenter",  "description": "Node autoscaler.",
+         "confidence": "High"},
+        {"type": "project",     "error": "EKS pod scheduling", "concept": "K8s scheduling",
+         "fix": "...", "root_cause": "...", "confidence": "Medium"},
+    ]
+    resume_claims = {
+        "skills":    ["AWS Lambda", "Kubernetes", "Karpenter"],
+        "projects":  ["AD Onboarding"],
+        "companies": ["Acme Corp"],
+    }
+    canned_response = json.dumps({
+        "role_title": "Senior Cloud Engineer",
+        "overall_readiness": "Partial",
+        "readiness_score": 65,
+        "matched_skills": [{"domain": "Karpenter", "candidate_confidence": "High", "status": "covered"}],
+        "priority_gaps": [{"domain": "Istio", "urgency": "High", "action": "Lab it"}],
+        "strengths": ["Karpenter"],
+        "summary": "Strong on EKS adjacency, exposed on Lambda.",
+        "strengths_to_lead_with": [
+            {"domain": "Karpenter", "reason": "On resume, in KB at High, on JD."}
+        ],
+        "exposures": [
+            {"domain": "AWS Lambda", "urgency": "High",
+             "study_action": "Build a Lambda lab covering cold-start mitigations."}
+        ],
+        "hidden_assets": [
+            {"domain": "K8s scheduling",
+             "resume_action": "Add 'pod scheduling debugging' to resume bullets."}
+        ],
+    })
+    state = _stub_responses(monkeypatch, [canned_response])
+
+    out = jd_analyzer.run_gap_analysis("JD text mentioning Lambda, Karpenter, Istio.",
+                                       kb, resume_claims=resume_claims)
+
+    # Prompt contained the resume block
+    assert "CANDIDATE RESUME CLAIMS" in state["prompts"][0]
+    assert "AWS Lambda" in state["prompts"][0]
+    # Response was parsed with all four buckets present
+    assert out["strengths_to_lead_with"][0]["domain"] == "Karpenter"
+    assert out["exposures"][0]["domain"]              == "AWS Lambda"
+    assert out["hidden_assets"][0]["domain"]          == "K8s scheduling"
+    assert out["priority_gaps"][0]["domain"]          == "Istio"
+
+
+def test_jd_analysis_without_resume_claims_falls_back_to_original_schema(monkeypatch):
+    """No resume_claims → no resume block in prompt, no extra-bucket schema requested."""
+    canned = json.dumps({
+        "role_title": "X", "overall_readiness": "Partial", "readiness_score": 50,
+        "matched_skills": [], "priority_gaps": [], "strengths": [], "summary": "ok",
+    })
+    state = _stub_responses(monkeypatch, [canned])
+
+    out = jd_analyzer.run_gap_analysis("JD", [], resume_claims=None)
+
+    assert "CANDIDATE RESUME CLAIMS" not in state["prompts"][0]
+    assert "strengths_to_lead_with" not in state["prompts"][0]
+    assert "exposures" not in out  # canned response didn't include it; not invented
 
 
 @pytest.fixture(autouse=True)

@@ -1287,12 +1287,22 @@ def modal_jd():
 
     run_label = "Run gap analysis" if mode == "Single" else "Run batch analysis"
     if st.button(run_label, type="primary", key="m_jd_run"):
+        # Load resume claims if present — enables the three-way bucketing
+        # (strengths_to_lead_with / exposures / hidden_assets) in both modes.
+        from pipeline.resume_check import load_resume_claims
+        resume_claims = load_resume_claims()
+        if resume_claims:
+            st.caption(
+                "📄 Resume claims detected — analysis will surface exposures "
+                "(claimed but unbacked) and hidden assets (known but unclaimed)."
+            )
+
         with st.spinner("Analyzing…"):
             try:
                 analyzed = None
                 if mode == "Single":
                     jds = parse_jds(st.session_state.jd_text)
-                    result = run_gap_analysis(jds[0], kb)
+                    result = run_gap_analysis(jds[0], kb, resume_claims=resume_claims)
                     st.session_state.jd_result = result
                     st.session_state.jd_batch_result = None
                     save_jd_report(result, prefix="single")
@@ -1303,7 +1313,7 @@ def modal_jd():
                     if len(jds) < 2:
                         st.warning("Couldn't split into multiple JDs — use `---` separators.")
                     else:
-                        batch = run_batch_analysis(jds, kb)
+                        batch = run_batch_analysis(jds, kb, resume_claims=resume_claims)
                         st.session_state.jd_batch_result = batch
                         st.session_state.jd_result = None
                         save_jd_report(batch, prefix="batch")
@@ -1327,11 +1337,27 @@ def modal_jd():
         quality_badge(int(round(r.get("readiness_score", 0) / 10)), "readiness")
         st.markdown(f"**{r.get('role_title', '?')}** — {r.get('overall_readiness', '?')}")
         st.markdown(r.get("summary", ""))
+
+        # Three-way buckets surface only when resume claims fed the analysis.
+        if r.get("strengths_to_lead_with"):
+            st.success("✅ Strengths to lead with (resume + KB + JD)")
+            for s in r["strengths_to_lead_with"]:
+                st.markdown(f"- **{s['domain']}** — {s.get('reason', '')}")
+        if r.get("exposures"):
+            st.error("🚩 Exposures (claimed on resume + on JD, no KB notes)")
+            for e in r["exposures"]:
+                st.markdown(f"- **{e['domain']}** ({e.get('urgency', 'High')}) — {e.get('study_action', '')}")
+        if r.get("hidden_assets"):
+            st.warning("💡 Hidden assets (in KB + on JD, missing from resume)")
+            for h in r["hidden_assets"]:
+                st.markdown(f"- **{h['domain']}** — {h.get('resume_action', '')}")
+
         if r.get("priority_gaps"):
-            st.markdown("##### Priority gaps")
+            st.markdown("##### Priority gaps (true study targets)")
             for g in r["priority_gaps"]:
                 st.markdown(f"- **{g['domain']}** ({g['urgency']}) — {g['action']}")
-        if r.get("strengths"):
+        # Legacy strengths field — only render if the new bucket isn't already populated.
+        if r.get("strengths") and not r.get("strengths_to_lead_with"):
             st.markdown("##### Strengths to lead with")
             for s in r["strengths"]:
                 st.markdown(f"- {s}")
@@ -1353,6 +1379,12 @@ def modal_jd():
                 st.markdown(f"- **{g['skill']}** — appears in {g['appears_in']} JDs · {g.get('urgency','')}")
         if agg.get("consistent_strengths"):
             st.markdown("**Consistent strengths:** " + ", ".join(agg["consistent_strengths"]))
+        if agg.get("cross_jd_exposures"):
+            st.error("🚩 Cross-JD exposures (claimed on resume + repeating gap across JDs)")
+            for ex in agg["cross_jd_exposures"]:
+                st.markdown(
+                    f"- **{ex['domain']}** — appears in {ex.get('appears_in', '?')} JDs · {ex.get('reason', '')}"
+                )
         st.markdown("##### Per-JD")
         for r in b.get("individual_results", []):
             with st.expander(f"JD {r['jd_number']}: {r.get('role_title','?')} — {r.get('readiness_score',0)}/100"):

@@ -37,7 +37,7 @@ def test_get_usage_summary_blank_when_no_file():
 
 
 def test_get_usage_summary_computes_cost_from_pricing():
-    """At default Sonnet 4.5 pricing ($3/MTok in, $15/MTok out):
+    """At the default pricing placeholders ($3/MTok in, $15/MTok out):
     1,000,000 input + 1,000,000 output = $3 + $15 = $18 exactly."""
     _clear_usage()
     _client._record_usage(1_000_000, 1_000_000)

@@ -106,7 +106,7 @@ MIN_WORD_COUNT = 50
 # ── Anthropic call configuration (env-overridable) ────────────────────────────
 # One choke point for the model name and a small set of named token caps.
 # Sized to use case so a model upgrade or budget adjustment is one env var.
-MODEL = os.environ.get("MINDCI_MODEL", "claude-sonnet-4-5")
+MODEL = os.environ.get("MINDCI_MODEL", "claude-sonnet-4-6")
 
 MAX_TOKENS_GRADE      = int(os.environ.get("MINDCI_MAX_TOKENS_GRADE",       512))   # interview grading
 MAX_TOKENS_REVIEW     = int(os.environ.get("MINDCI_MAX_TOKENS_REVIEW",     1024))   # preview, enrichment, rewrite
@@ -114,7 +114,9 @@ MAX_TOKENS_ANALYSIS   = int(os.environ.get("MINDCI_MAX_TOKENS_ANALYSIS",   2048)
 MAX_TOKENS_BATCH      = int(os.environ.get("MINDCI_MAX_TOKENS_BATCH",      3000))   # batch JD analysis
 MAX_TOKENS_GENERATION = int(os.environ.get("MINDCI_MAX_TOKENS_GENERATION", 4096))   # flashcards, scenarios, weekly
 
-# USD per million tokens. Defaults track Claude Sonnet 4.5 list pricing.
+# USD per million tokens. Defaults are sensible placeholders — verify against
+# Anthropic's current pricing for the active model and override via env vars
+# if your model or pricing has changed.
 # Override per environment if Anthropic adjusts pricing or you switch models.
 MODEL_INPUT_PRICE_PER_MTOK  = float(os.environ.get("MINDCI_INPUT_PRICE_PER_MTOK",  3.0))
 MODEL_OUTPUT_PRICE_PER_MTOK = float(os.environ.get("MINDCI_OUTPUT_PRICE_PER_MTOK", 15.0))
