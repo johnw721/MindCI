@@ -138,6 +138,8 @@ def _init_state():
         # Topic suggestions
         "suggestions_data": None,
         "cold_test_results": {},        # topic → Q/A text
+        "cold_test_idx": {},            # topic → current question index
+        "cold_test_revealed": {},       # topic → bool (answer visible)
         # Weekly plan
         "weekly_hours": 8,
     }
@@ -842,8 +844,43 @@ def render_topic_suggestions():
                     except Exception as e:
                         st.error(f"Cold test failed: {e}")
             if topic in st.session_state.cold_test_results:
-                with st.expander(f"Cold test for {topic}"):
-                    st.markdown(st.session_state.cold_test_results[topic])
+                # Parse Q/A pairs from raw text
+                import re as _re
+                raw = st.session_state.cold_test_results[topic]
+                pairs = _re.findall(
+                    r"Q:\s*(.+?)\s*A:\s*(.+?)(?=\nQ:|\Z)",
+                    raw, _re.DOTALL
+                )
+                if not pairs:
+                    with st.expander(f"Cold test for {topic}"):
+                        st.markdown(raw)
+                else:
+                    n = len(pairs)
+                    idx = st.session_state.cold_test_idx.get(topic, 0)
+                    idx = max(0, min(idx, n - 1))
+                    revealed = st.session_state.cold_test_revealed.get(topic, False)
+
+                    with st.container(border=True):
+                        st.caption(f"Cold test · {topic}  —  question {idx + 1} of {n}")
+                        st.markdown(f"**Q: {pairs[idx][0].strip()}**")
+
+                        if not revealed:
+                            if st.button("Reveal answer", key=f"cold_reveal__{topic}"):
+                                st.session_state.cold_test_revealed[topic] = True
+                                st.rerun()
+                        else:
+                            st.info(pairs[idx][1].strip())
+                            nav_cols = st.columns([1, 1, 4])
+                            if idx > 0:
+                                if nav_cols[0].button("← Prev", key=f"cold_prev__{topic}"):
+                                    st.session_state.cold_test_idx[topic] = idx - 1
+                                    st.session_state.cold_test_revealed[topic] = False
+                                    st.rerun()
+                            if idx < n - 1:
+                                if nav_cols[1].button("Next →", key=f"cold_next__{topic}"):
+                                    st.session_state.cold_test_idx[topic] = idx + 1
+                                    st.session_state.cold_test_revealed[topic] = False
+                                    st.rerun()
             st.markdown("---")
 
     _section("Uncovered, high demand", data.get("uncovered_high_demand", []))
