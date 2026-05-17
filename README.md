@@ -6,6 +6,12 @@ A personal knowledge pipeline for Cloud Engineers. Converts raw study notes into
 
 ---
 
+## Demo
+
+<video src="Screen Recording 2026-05-16 210504.mp4" controls width="100%"></video>
+
+---
+
 ## Setup
 
 ![alt text](image.png)
