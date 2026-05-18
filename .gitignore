@@ -15,6 +15,7 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+pytest-cache-files-*/
 .ruff_cache/
 .vscode/
 Thumbs.db

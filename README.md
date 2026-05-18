@@ -8,13 +8,13 @@ A personal knowledge pipeline for Cloud Engineers. Converts raw study notes into
 
 ## Demo
 
-<video src="Screen Recording 2026-05-16 210504.mp4" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/4e2964e1-3e06-439a-8579-6cd9b7dc6bc8" controls width="100%"></video>
 
 ---
 
 ## Setup
 
-![alt text](image.png)
+![alt text](assets/image.png)
 
 
 ```bash
