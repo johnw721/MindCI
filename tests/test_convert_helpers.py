@@ -6,10 +6,8 @@ Unit tests for the two pure-Python helpers in pipeline/convert.py:
   - detect_note_sections   — heuristically splits a long note into sections
 """
 
-import pytest
 
 from pipeline.convert import _salvage_partial_json, detect_note_sections
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # _salvage_partial_json
