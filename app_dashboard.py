@@ -116,6 +116,8 @@ def _init_state():
         "convert_enrich_questions": None,
         "convert_enrich_answers": [],
         "convert_enrich_rewritten": None,
+        "convert_uploaded_files": [],   # [{name, content}] when multiple files staged
+        "convert_file_idx": 0,          # which file is active in multi-file mode
         # Generate modal
         "gen_mode": "Flashcards",
         # Card Review modal
@@ -903,11 +905,46 @@ def modal_convert():
         height=240,
         key="modal_convert_text",
     )
-    uploaded = st.file_uploader("…or upload .txt / .md", type=["txt", "md"],
-                                key="modal_convert_upload")
-    if uploaded is not None:
-        text = uploaded.read().decode("utf-8", errors="ignore")
-        st.session_state.convert_filename = uploaded.name
+    uploaded_files = st.file_uploader(
+        "…or upload .txt / .md (hold Ctrl/⌘ to select multiple)",
+        type=["txt", "md"],
+        accept_multiple_files=True,
+        key="modal_convert_upload",
+    )
+    if uploaded_files:
+        file_data = [
+            {"name": f.name, "content": f.read().decode("utf-8", errors="ignore")}
+            for f in uploaded_files
+        ]
+        if len(file_data) == 1:
+            # Single upload — same behaviour as before
+            text = file_data[0]["content"]
+            st.session_state.convert_filename = file_data[0]["name"]
+            st.session_state.convert_uploaded_files = file_data
+        else:
+            # Multiple uploads: show a file selector; interactive tools work on
+            # whichever file is "active"; batch convert handles all at once.
+            st.session_state.convert_uploaded_files = file_data
+            names = [f["name"] for f in file_data]
+            idx = min(st.session_state.convert_file_idx, len(file_data) - 1)
+            selected_name = st.selectbox(
+                f"Active file — {len(file_data)} uploaded"
+                " (edit/convert individually, or batch-convert all below):",
+                names,
+                index=idx,
+                key="modal_conv_file_pick",
+            )
+            selected_idx = names.index(selected_name)
+            if selected_idx != st.session_state.convert_file_idx:
+                # File switched — clear per-note state so we start fresh
+                st.session_state.convert_file_idx = selected_idx
+                st.session_state.convert_preview = None
+                st.session_state.convert_quality = None
+                st.session_state.convert_enrich_questions = None
+                st.session_state.convert_enrich_answers = []
+                st.session_state.convert_enrich_rewritten = None
+            text = file_data[selected_idx]["content"]
+            st.session_state.convert_filename = file_data[selected_idx]["name"]
     st.session_state.convert_text = text
 
     # ── URL ingest via Jina Reader ──────────────────────────────────────────
@@ -949,6 +986,52 @@ def modal_convert():
         do_enrich = st.button("Enrichment assistant", key="m_conv_e")
     with cols[3]:
         do_commit = st.button("Convert & save", type="primary", key="m_conv_c")
+
+    # ── Batch convert (visible only when multiple files are staged) ─────────
+    _staged = st.session_state.convert_uploaded_files
+    if len(_staged) > 1:
+        st.caption(
+            f"{len(_staged)} files staged — convert them one-by-one above, "
+            "or batch-convert all at once (skips quality/enrichment steps)."
+        )
+        if st.button(f"⚡ Batch convert all {len(_staged)} files",
+                     key="m_conv_batch"):
+            total_saved = 0
+            total_invalid = 0
+            os.makedirs(RAW_DIR, exist_ok=True)
+            with st.spinner(f"Converting {len(_staged)} files with Claude…"):
+                for _fdata in _staged:
+                    try:
+                        _fname = _fdata["name"]
+                        _fcontent = _fdata["content"]
+                        Path(RAW_DIR, _fname).write_text(_fcontent, encoding="utf-8")
+                        _fm_meta, _fm_body = parse_markdown_with_frontmatter(_fcontent)
+                        if _fm_meta:
+                            _hint = "\n".join(f"{k}: {v}" for k, v in _fm_meta.items())
+                            _payload = (
+                                f"--- SOURCE: {_fname} ---\n"
+                                f"--- KNOWN METADATA (use as-is, don't override) ---\n"
+                                f"{_hint}\n"
+                                f"--- NOTE BODY ---\n{_fm_body}"
+                            )
+                        else:
+                            _payload = f"--- SOURCE: {_fname} ---\n\n{_fcontent}"
+                        _raw = convert_to_json(_payload)
+                        _parsed, _report = parse_and_save_json(_raw)
+                        total_saved += len(_parsed)
+                        total_invalid += _report["invalid_count"]
+                    except Exception as _exc:
+                        st.warning(f"{_fdata['name']}: failed — {_exc}")
+            st.success(
+                f"Batch complete — {total_saved} entries saved "
+                f"across {len(_staged)} files."
+            )
+            if total_invalid:
+                st.warning(f"{total_invalid} invalid entries → data/invalid_entries.json")
+            st.session_state.convert_uploaded_files = []
+            st.session_state.convert_file_idx = 0
+            st.session_state.convert_preview = None
+            st.session_state.convert_quality = None
 
     # Quality
     if do_quality and text.strip():
@@ -1072,6 +1155,8 @@ def modal_convert():
 
     if st.button("Close", key="m_conv_close"):
         st.session_state.active_modal = None
+        st.session_state.convert_uploaded_files = []
+        st.session_state.convert_file_idx = 0
         st.rerun()
 
 

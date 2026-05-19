@@ -21,7 +21,7 @@ Then it builds a weekly plan with hands-on projects, blog topics, and resume bul
 
 ## How it works (the simple version)
 
-1. **Drop notes in.** Plain text, markdown, Obsidian files with frontmatter, or paste a URL (an AWS blog post, a docs page) and MindCI fetches and structures it. From the terminal: `mindci.py capture "Lambda cold start fails on circular imports #aws"` writes it straight to the watch folder.
+1. **Drop notes in.** Plain text, markdown, Obsidian files with frontmatter, or paste a URL (an AWS blog post, a docs page) and MindCI fetches and structures it. You can also select multiple `.txt` / `.md` files at once — pick one to work on interactively, or hit **Batch convert all** to process the whole batch in one shot. From the terminal: `mindci.py capture "Lambda cold start fails on circular imports #aws"` writes it straight to the watch folder.
 2. **MindCI converts them** into structured knowledge (project, certification, or exploration).
 3. **Generate flashcards or scenario questions.** Review them in the dashboard, export to Anki via CSV, or — if you have AnkiConnect installed — push approved cards directly into your Anki deck with one click. Code blocks come with download buttons so you can drop a Terraform/K8s/Python snippet straight into your editor.
 4. **Mock interview** – MindCI picks questions from your knowledge base, grades your answers, and adjusts each topic's difficulty for next time. Mid-session refresh? It picks up where you left off.
