@@ -49,6 +49,16 @@ class ProjectEntry(BaseModel):
     confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
     confidence_history: Optional[list] = None     # [[ts, tier], ...] capped at 20
 
+    @model_validator(mode="before")
+    @classmethod
+    def promote_concept_to_error(cls, data):
+        """Claude sometimes uses 'concept' as the headline instead of 'error'.
+        Promote it so required-field validation passes."""
+        if isinstance(data, dict) and not data.get("error") and data.get("concept"):
+            data = dict(data)
+            data["error"] = data["concept"]
+        return data
+
     @field_validator("confidence", mode="before")
     @classmethod
     def norm_confidence(cls, v):
@@ -87,6 +97,14 @@ class CertificationEntry(BaseModel):
     confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
     confidence_history: Optional[list] = None     # [[ts, tier], ...] capped at 20
 
+    @field_validator("key_points", "confusion", "importance", mode="before")
+    @classmethod
+    def coerce_list_to_str(cls, v):
+        """Claude sometimes returns list-typed fields as arrays -- join them."""
+        if isinstance(v, list):
+            return "; ".join(str(item) for item in v if item)
+        return v
+
     @field_validator("confidence", mode="before")
     @classmethod
     def norm_confidence(cls, v):
@@ -124,6 +142,14 @@ class ExplorationEntry(BaseModel):
     auto_confidence: Optional[str] = None         # set by pipeline.calibration
     confidence_updated_at: Optional[str] = None   # ISO timestamp of last recalibration
     confidence_history: Optional[list] = None     # [[ts, tier], ...] capped at 20
+
+    @field_validator("use_cases", "comparison", mode="before")
+    @classmethod
+    def coerce_list_to_str(cls, v):
+        """Claude sometimes returns these as lists instead of strings -- join them."""
+        if isinstance(v, list):
+            return "; ".join(str(item) for item in v if item)
+        return v
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -164,9 +190,9 @@ def validate_entries(entries):
     Validate a list of parsed KB entries.
 
     Returns:
-        valid   — list of validated + normalized dicts
-        invalid — list of {"entry": raw, "errors": [str]}
-        warnings — list of {"entry": raw, "warnings": [str]}
+        valid   -- list of validated + normalized dicts
+        invalid -- list of {"entry": raw, "errors": [str]}
+        warnings -- list of {"entry": raw, "warnings": [str]}
     """
     valid = []
     invalid = []

@@ -78,3 +78,72 @@ def test_missing_optional_confidence_emits_warning_not_error():
     assert not invalid
     assert valid[0]["confidence"] == "Low"  # defaulted
     assert warnings and "confidence defaulted to Low" in warnings[0]["warnings"]
+
+
+def test_exploration_use_cases_list_is_coerced_to_string():
+    """Claude sometimes generates use_cases as a list — should be joined to a string."""
+    entries = [{
+        "type": "exploration",
+        "tool": "Terraform",
+        "description": "IaC tool for provisioning cloud infrastructure.",
+        "use_cases": ["provision infra", "manage drift"],
+        "comparison": ["vs CDK", "vs Pulumi"],
+        "confidence": "Medium",
+        "difficulty": "Easy",
+    }]
+    valid, invalid, _ = validate_entries(entries)
+
+    assert len(valid) == 1, f"Expected valid but got invalid: {invalid}"
+    assert valid[0]["use_cases"] == "provision infra; manage drift"
+    assert valid[0]["comparison"] == "vs CDK; vs Pulumi"
+
+
+def test_exploration_empty_list_use_cases_becomes_empty_string():
+    """An empty use_cases list should coerce to an empty string, not fail."""
+    entries = [{
+        "type": "exploration",
+        "tool": "Kubernetes",
+        "description": "Container orchestration platform.",
+        "use_cases": [],
+        "comparison": None,
+        "confidence": "Low",
+        "difficulty": "Medium",
+    }]
+    valid, invalid, _ = validate_entries(entries)
+
+    assert len(valid) == 1, f"Expected valid but got invalid: {invalid}"
+    assert valid[0]["use_cases"] == ""
+
+
+def test_certification_key_points_list_is_coerced_to_string():
+    """Claude sometimes generates key_points as a list — should be joined."""
+    entries = [{
+        "type": "certification",
+        "topic": "Terraform Associate - Modules",
+        "key_points": ["Child modules reuse root config", "Source can be local or registry"],
+        "confusion": ["local vs registry syntax"],
+        "confidence": "Low",
+        "difficulty": "Medium",
+    }]
+    valid, invalid, _ = validate_entries(entries)
+
+    assert len(valid) == 1, f"Expected valid but got invalid: {invalid}"
+    assert valid[0]["key_points"] == "Child modules reuse root config; Source can be local or registry"
+    assert valid[0]["confusion"] == "local vs registry syntax"
+
+
+def test_project_concept_promoted_when_error_missing():
+    """Entries using 'concept' instead of 'error' should be auto-promoted."""
+    entries = [{
+        "type": "project",
+        "concept": "Append-only prompt layer composition",
+        "root_cause": "Template substitution creates coupling",
+        "fix": "Append-only design isolates each layer",
+        "confidence": "High",
+        "difficulty": "Medium",
+    }]
+    valid, invalid, _ = validate_entries(entries)
+
+    assert len(valid) == 1, f"Expected valid but got invalid: {invalid}"
+    assert valid[0]["error"] == "Append-only prompt layer composition"
+    assert valid[0]["concept"] == "Append-only prompt layer composition"

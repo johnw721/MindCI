@@ -250,7 +250,7 @@ certification:
   topic, key_points, confusion, importance, confidence, difficulty
 
 exploration:
-  tool, description, comparison, use_cases, confidence, difficulty
+  tool, description, comparison (string), use_cases (string — not a list), confidence, difficulty
 
 RAW NOTES:
 {raw_text}
