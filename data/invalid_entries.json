@@ -1,0 +1,296 @@
+[
+  {
+    "index": 0,
+    "label": "Write Tool (Cowork / Claude Code)",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Write Tool (Cowork / Claude Code)",
+      "description": "The Write tool silently truncates files beyond roughly 191 lines (~7 KB). It returns success but the file on disk is incomplete. The truncation always happens at the same byte boundary, making it a hard limit rather than flakiness. The only reliable workaround for large files is to write them via python3 inside a bash call: open the path, call f.write(content), close.",
+      "comparison": "Write tool vs bash python3 write: Write tool is convenient but has a hard ~150-191 line limit with silent success reporting; python3 bash write has no such limit and is reliable for large files.",
+      "use_cases": [
+        "Writing large generated files",
+        "Debugging silent file truncation issues",
+        "Any file expected to exceed ~150 lines in automated tooling"
+      ],
+      "confidence": "High",
+      "difficulty": "Medium"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 1,
+    "label": "Node vm.createContext with Cloudflare Workers ESM",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Node vm.createContext with Cloudflare Workers ESM",
+      "description": "Cloudflare Workers use `export default { async fetch() {} }` (ESM), which Node's vm module cannot evaluate directly. The fix is a source transform: replace `export default ` with `self.workerExport = ` via regex before passing the source to vm.Script. The sandbox object is assigned to both `self` and `window`. All Fetch API globals must be injected into the sandbox explicitly from Node 18+ globalThis.",
+      "comparison": "Direct vm eval vs regex-transformed eval: Direct eval fails on ESM export syntax; transformed eval captures the export as a sandbox property and works correctly.",
+      "use_cases": [
+        "Testing Cloudflare Workers in Node without a live runtime",
+        "Unit testing ESM worker fetch handlers",
+        "Sandboxed evaluation of worker source code"
+      ],
+      "confidence": "High",
+      "difficulty": "Medium"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 2,
+    "label": "Mutable Fetch Proxy Pattern",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Mutable Fetch Proxy Pattern",
+      "description": "When testing a worker loaded once into a vm sandbox, individual tests cannot swap the fetch mock by reloading or by reassigning sandbox.fetch because the worker captured the original reference at eval time. The solution is a mutable proxy: define `let fetchProxy = defaultMock` in the test file, inject `fetch: (...args) => fetchProxy(...args)` into the sandbox, then assign `fetchProxy = myMock` inside each test. The indirection ensures every call goes through the current value of fetchProxy at call time.",
+      "comparison": "Direct fetch injection vs mutable proxy injection: Injecting `fetch: fetchProxy` directly captures the value at injection time making per-test reassignment ineffective; the wrapper function indirection allows per-test mock swapping without reloading the worker.",
+      "use_cases": [
+        "Per-test fetch mocking in vm sandbox worker tests",
+        "Avoiding expensive worker reloads between tests",
+        "Simulating different Anthropic API responses per test case"
+      ],
+      "confidence": "High",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 3,
+    "label": "Per-User KV Entitlement Model",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Per-User KV Entitlement Model",
+      "description": "Replaces a single global KV counter (50/day across all users) with three separate KV namespaces: FREE_TRIAL, TOKEN_BALANCE, and UNLIMITED, each keyed by extension ID. Priority is checked in order: UNLIMITED → TOKEN_BALANCE → FREE_TRIAL → reject. A user can hold multiple entitlements simultaneously; the highest-tier one wins. Separating namespaces keeps reads cheap and avoids read-modify-write races between tiers.",
+      "comparison": "Global daily counter vs per-user namespace model: Global counter is simple but cannot support tiered entitlements or per-user tracking; per-user namespace model supports multiple simultaneous entitlement tiers, is cheaper to read (early exit on highest tier), and avoids race conditions.",
+      "use_cases": [
+        "Monetised Cloudflare Worker APIs",
+        "Tiered access control with free trial, token balance, and unlimited tiers",
+        "Extension or plugin entitlement management"
+      ],
+      "confidence": "High",
+      "difficulty": "Medium"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 4,
+    "label": "Fail-Open KV Policy in Cloudflare Workers",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Fail-Open KV Policy in Cloudflare Workers",
+      "description": "Every KV read in the worker is wrapped in try/catch. If a namespace call throws due to transient KV outage or binding misconfiguration, the worker allows the request through anyway and sets the response header `X-Entitlement-Source: fallback`. This degrades a KV outage to 'everyone gets through' rather than 'everyone is blocked'. The trade-off is potential bypass of paid limits during prolonged outages, considered acceptable versus blocking all legitimate paying users.",
+      "comparison": "Fail-open vs fail-closed KV error handling: Fail-closed blocks all users on outage including paying customers; fail-open allows all users through on outage risking limit bypass but preserving paying user experience.",
+      "use_cases": [
+        "Production Cloudflare Workers with KV-backed entitlements",
+        "High-availability API gateways where blocking paying users is unacceptable",
+        "Systems where brief abuse risk is tolerated over availability loss"
+      ],
+      "confidence": "High",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 5,
+    "label": "Optimistic Token Deduction with Post-Response Correction",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Optimistic Token Deduction with Post-Response Correction",
+      "description": "The worker deducts a flat estimate (TOKENS_PER_REQUEST, default 2500) from the token balance before forwarding to Anthropic. After the Anthropic response streams back, the actual token count is read from SSE events and the balance is corrected: `correctedBalance = tokensRemaining + tokensDeducted - actualTokens`. This avoids a second KV read by using values already in memory from the initial entitlement check. The correction write happens in ctx.waitUntil().",
+      "comparison": "Pre-deduction flat estimate vs exact post-response deduction: Exact deduction requires waiting for full response before responding to client; optimistic deduction allows immediate streaming to client with async correction, but correction can be lost if the worker is terminated early.",
+      "use_cases": [
+        "Token-metered streaming API workers",
+        "Cloudflare Workers forwarding to Anthropic or similar LLM APIs",
+        "Any monetised streaming proxy needing balance management"
+      ],
+      "confidence": "High",
+      "difficulty": "Medium"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 6,
+    "label": "SSE Stream tee() for Dual Consumption in Cloudflare Workers",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "SSE Stream tee() for Dual Consumption in Cloudflare Workers",
+      "description": "A ReadableStream can only be consumed once. To both forward the Anthropic SSE stream to the client and parse it for token usage, call `response.body.tee()` which returns `[branchA, branchB]`. Branch A is passed directly to the client response. Branch B is consumed in a ctx.waitUntil() promise that reads chunks, decodes them, and extracts `message_start` and `message_delta` usage events. Backpressure on branch B does not stall branch A delivery to the client, but tee() buffers data internally until both branches have consumed it.",
+      "comparison": "Single-consumer stream vs tee'd dual-consumer stream: Single consumer forces a choice between forwarding to client or parsing for usage; tee() enables both simultaneously with runtime-managed buffering, at the cost of potential unbounded buffer growth if branch B is slow.",
+      "use_cases": [
+        "Streaming LLM proxy workers needing usage telemetry",
+        "Any Cloudflare Worker that must both forward and inspect a response body",
+        "Token accounting on streamed SSE responses"
+      ],
+      "confidence": "Medium",
+      "difficulty": "Hard"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 7,
+    "label": "ctx.waitUntil()",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "ctx.waitUntil()",
+      "description": "Once a Cloudflare Worker's fetch handler returns a Response, the runtime may terminate the isolate. Any async work that needs to run after the response is sent must be registered with `ctx.waitUntil(promise)`. The runtime keeps the isolate alive until all waitUntil promises settle. This is the correct pattern for fire-and-forget side effects such as correcting KV balances after streaming. Errors in waitUntil promises are silent unless a .catch() is attached.",
+      "comparison": "Inline async work vs ctx.waitUntil: Inline work before returning the response delays the client; waitUntil allows immediate response return while bookkeeping continues asynchronously, but errors are silent and work can be lost on early termination.",
+      "use_cases": [
+        "Post-response KV writes in Cloudflare Workers",
+        "Fire-and-forget logging or analytics after response",
+        "Token balance correction after streaming completes"
+      ],
+      "confidence": "Medium",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 8,
+    "label": "HMAC-SHA256 Webhook Verification with SubtleCrypto",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "HMAC-SHA256 Webhook Verification with SubtleCrypto",
+      "description": "Cloudflare Workers have no Node crypto module. Webhook HMAC verification uses the Web Crypto API (SubtleCrypto) exclusively. Steps: (1) crypto.subtle.importKey with HMAC/SHA-256, (2) crypto.subtle.sign, (3) convert ArrayBuffer to lowercase hex string via Uint8Array mapping, (4) timing-safe comparison against the webhook header signature. Both importKey and sign are async and require await.",
+      "comparison": "Node crypto HMAC vs SubtleCrypto HMAC: Node crypto provides synchronous hmac helpers; SubtleCrypto is fully async, requires explicit key import, and uses ArrayBuffer outputs requiring manual hex conversion.",
+      "use_cases": [
+        "Gumroad webhook signature verification in Cloudflare Workers",
+        "Any webhook HMAC verification in edge/serverless environments without Node crypto",
+        "Security-critical request authentication in Workers"
+      ],
+      "confidence": "Medium",
+      "difficulty": "Hard"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 9,
+    "label": "Timing-Safe String Comparison (XOR Accumulation)",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Timing-Safe String Comparison (XOR Accumulation)",
+      "description": "Standard string equality (`===`) short-circuits on the first differing character, leaking information about how many leading characters match via timing side-channel. The safe pattern accumulates XOR differences across the full string without early exit: `let result = 0; for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i); return result === 0`. Length must be verified first; this pattern is only safe when both strings are the same length.",
+      "comparison": "Standard === comparison vs XOR accumulation: === leaks timing information on mismatch position; XOR accumulation always runs the full loop regardless of where differences occur, preventing timing side-channel attacks.",
+      "use_cases": [
+        "HMAC signature comparison for webhooks",
+        "Any security-sensitive string equality check where timing attacks are a concern",
+        "Cryptographic token or secret comparison"
+      ],
+      "confidence": "High",
+      "difficulty": "Medium"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 10,
+    "label": "Gumroad Webhook Payload Parser",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "Gumroad Webhook Payload Parser",
+      "description": "Gumroad sends webhook POST bodies as `application/x-www-form-urlencoded`, not JSON. Custom product fields use bracket notation in the form key: `custom_fields[extension_id]`. Parse with `new URLSearchParams(await request.text())` then read with `params.get('custom_fields[extension_id]')` — the bracket characters are literal parts of the key name, not array syntax. The product permalink is available as `params.get('permalink')` and is the canonical product identifier.",
+      "comparison": "request.json() vs URLSearchParams(request.text()): request.json() throws on Gumroad webhooks because Content-Type is x-www-form-urlencoded; URLSearchParams correctly parses the form-encoded body including bracket-notation custom fields.",
+      "use_cases": [
+        "Gumroad purchase webhook handling in Cloudflare Workers",
+        "Provisioning entitlements on sale events",
+        "Extracting custom field data from Gumroad webhook payloads"
+      ],
+      "confidence": "Medium",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 11,
+    "label": "90-Day Inactivity Reset Logic for Free Trials",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "90-Day Inactivity Reset Logic for Free Trials",
+      "description": "The free trial reset rule requires two independent conditions to both be true: (1) used < total (user is not exhausted) AND (2) lastActivity is older than 90 days. Exhausted users are never reset regardless of inactivity, preventing abuse via deliberate dormancy to recycle free credits. The lastActivity timestamp is updated on every request including those from exhausted users, measuring inactivity from the most recent attempt rather than from exhaustion.",
+      "comparison": "Reset on inactivity alone vs dual-condition reset: Resetting exhausted users on inactivity creates a recycling loophole; requiring non-exhaustion as a condition alongside inactivity closes the loophole while still releasing stale non-exhausted allocations.",
+      "use_cases": [
+        "Free trial entitlement management in monetised APIs",
+        "Preventing free credit abuse through dormancy cycling",
+        "KV-backed usage tracking with inactivity-based cleanup"
+      ],
+      "confidence": "High",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 12,
+    "label": "git show HEAD:<path> for File Recovery",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "git show HEAD:<path> for File Recovery",
+      "description": "`git checkout HEAD -- <file>` can be blocked by filesystem permissions in sandboxed environments. The workaround pipes blob content to stdout first then copies it: `git show HEAD:<relative-path> > /tmp/restore.js && cp /tmp/restore.js <destination>`. The `git show` command reads the object from the git database without touching the working tree, bypassing the permission check on the destination path.",
+      "comparison": "git checkout HEAD vs git show HEAD piped to cp: git checkout writes directly to the working tree and can be blocked by destination path permissions; git show reads from the git object database to stdout, allowing the content to be written via a temp file with cp.",
+      "use_cases": [
+        "File recovery in sandboxed or permission-restricted environments",
+        "Restoring files when direct working tree writes are blocked",
+        "Extracting historical file content without modifying the working tree"
+      ],
+      "confidence": "High",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  },
+  {
+    "index": 13,
+    "label": "wrangler .dev.vars",
+    "entry": {
+      "source": "study_notes_marginalia_monetisation.txt",
+      "type": "exploration",
+      "tool": "wrangler .dev.vars",
+      "description": "When running `wrangler dev` locally, secrets are not available from deployed KV bindings. Wrangler reads them from a file named `.dev.vars` in the worker directory, formatted as KEY=VALUE pairs (same as .env). This file must be in .gitignore as it contains plaintext API keys. It is the local equivalent of `wrangler secret put` and must be created manually after cloning the repo. It does not live inside .wrangler/ and must be gitignored explicitly.",
+      "comparison": ".dev.vars vs wrangler secret put: wrangler secret put stores secrets in Cloudflare's encrypted secret store for deployed workers; .dev.vars provides the same secrets to wrangler dev locally in plaintext and must be manually managed and gitignored.",
+      "use_cases": [
+        "Local development of Cloudflare Workers requiring secrets",
+        "Managing ANTHROPIC_API_KEY and similar credentials for wrangler dev",
+        "Onboarding developers to a Workers project requiring local secret setup"
+      ],
+      "confidence": "High",
+      "difficulty": "Easy"
+    },
+    "errors": [
+      "use_cases: Input should be a valid string"
+    ]
+  }
+]

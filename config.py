@@ -114,6 +114,7 @@ MAX_TOKENS_REVIEW     = int(os.environ.get("MINDCI_MAX_TOKENS_REVIEW",     1024)
 MAX_TOKENS_ANALYSIS   = int(os.environ.get("MINDCI_MAX_TOKENS_ANALYSIS",   2048))   # gap analysis, suggestions
 MAX_TOKENS_BATCH      = int(os.environ.get("MINDCI_MAX_TOKENS_BATCH",      3000))   # batch JD analysis
 MAX_TOKENS_GENERATION = int(os.environ.get("MINDCI_MAX_TOKENS_GENERATION", 4096))   # flashcards, scenarios, weekly
+MAX_TOKENS_CONVERT    = int(os.environ.get("MINDCI_MAX_TOKENS_CONVERT",    8192))   # note conversion (higher headroom for long notes)
 
 # USD per million tokens. Defaults are sensible placeholders — verify against
 # Anthropic's current pricing for the active model and override via env vars

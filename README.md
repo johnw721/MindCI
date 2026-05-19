@@ -231,6 +231,7 @@ All env-overridable, sensible defaults in `config.py`.
 | `MINDCI_MAX_TOKENS_ANALYSIS` | `2048` | Gap analysis, suggestions |
 | `MINDCI_MAX_TOKENS_BATCH` | `3000` | Batch JD analysis |
 | `MINDCI_MAX_TOKENS_GENERATION` | `4096` | Flashcards, scenarios, weekly plan |
+| `MINDCI_MAX_TOKENS_CONVERT` | `8192` | Note conversion — higher headroom for long notes; raise if very dense multi-topic notes still truncate |
 | `MINDCI_INPUT_PRICE_PER_MTOK` | `3.0` | USD per million input tokens |
 | `MINDCI_OUTPUT_PRICE_PER_MTOK` | `15.0` | USD per million output tokens |
 | `MINDCI_CACHE_DISABLE` | unset | Set to bypass the response cache (forces every call through to the API) |

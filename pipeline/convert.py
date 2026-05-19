@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -6,8 +7,10 @@ from datetime import datetime
 # Add project root to path for validation + config imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import DATA_DIR, MAX_TOKENS_GENERATION
+from config import DATA_DIR, MAX_TOKENS_CONVERT
 from pipeline._client import call_with_retry
+
+_log = logging.getLogger("mindci")
 
 
 def _repair_json(bad_json):
@@ -16,7 +19,48 @@ def _repair_json(bad_json):
 
 MALFORMED JSON:
 {bad_json}"""
-    return call_with_retry(repair_prompt, max_tokens=MAX_TOKENS_GENERATION)
+    return call_with_retry(repair_prompt, max_tokens=MAX_TOKENS_CONVERT)
+
+
+def _salvage_partial_json(text: str) -> list:
+    """Extract complete JSON objects from a truncated array response.
+
+    Walks the string tracking brace depth and string/escape state so it
+    can identify fully-formed ``{...}`` objects even when the surrounding
+    array is cut off mid-entry (the most common truncation pattern).
+    Returns a (possibly empty) list of successfully parsed dicts.
+    """
+    s = text.strip().lstrip("[").lstrip()
+    objects: list = []
+    depth = 0
+    start: int | None = None
+    in_string = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if in_string:
+            if ch == "\\":
+                i += 2  # skip the escaped character entirely (e.g. \", \\)
+                continue
+            if ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        objects.append(json.loads(s[start : i + 1]))
+                    except json.JSONDecodeError:
+                        pass
+                    start = None
+        i += 1
+    return objects
 
 
 def _strip_fences(text):
@@ -99,26 +143,42 @@ exploration:
 RAW NOTES:
 {raw_text}
 """
-    return call_with_retry(prompt, max_tokens=MAX_TOKENS_GENERATION)
+    return call_with_retry(prompt, max_tokens=MAX_TOKENS_CONVERT)
 
 
 def parse_and_save_json(raw_response):
     clean = _strip_fences(raw_response)
+    salvage_warning: str | None = None
 
     # Attempt 1: parse directly
     try:
         parsed = json.loads(clean)
-    except json.JSONDecodeError:
-        # Attempt 2: ask Claude to repair
-        try:
-            repaired = _strip_fences(_repair_json(clean))
-            parsed = json.loads(repaired)
-        except (json.JSONDecodeError, RuntimeError) as e:
-            raise ValueError(
-                f"Could not parse Claude response as JSON after repair attempt.\n"
-                f"Error: {e}\n"
-                f"First 300 chars of response: {clean[:300]}"
+    except json.JSONDecodeError as first_err:
+        # Attempt 2: salvage complete objects from a truncated array.
+        # No extra API call — handles the common case where the model's
+        # response was cut off before the closing `]`.
+        salvaged = _salvage_partial_json(clean)
+        if salvaged:
+            parsed = salvaged
+            salvage_warning = (
+                f"Response was truncated; salvaged {len(salvaged)} complete "
+                f"entr{'y' if len(salvaged) == 1 else 'ies'}. "
+                f"Some content from this note may be missing — consider "
+                f"splitting very long notes into smaller files. "
+                f"(Original parse error: {first_err})"
             )
+            _log.warning("convert: %s", salvage_warning)
+        else:
+            # Attempt 3: ask Claude to repair (last resort)
+            try:
+                repaired = _strip_fences(_repair_json(clean))
+                parsed = json.loads(repaired)
+            except (json.JSONDecodeError, RuntimeError) as e:
+                raise ValueError(
+                    f"Could not parse Claude response as JSON after repair attempt.\n"
+                    f"Error: {e}\n"
+                    f"First 300 chars of response: {clean[:300]}"
+                )
 
     if not isinstance(parsed, list):
         raise ValueError(f"Expected a JSON array, got {type(parsed).__name__}")
@@ -141,12 +201,15 @@ def parse_and_save_json(raw_response):
     try:
         from validation import validate_and_save
         report = validate_and_save(parsed, current_path)
-        return parsed, report
     except ImportError:
         # Fallback if validation not available
         with open(current_path, "w", encoding="utf-8") as f:
             json.dump(parsed, f, indent=2, ensure_ascii=False)
-        return parsed, {"valid_count": len(parsed), "invalid_count": 0, "warning_count": 0, "invalid": [], "warnings": []}
+        report = {"valid_count": len(parsed), "invalid_count": 0, "warning_count": 0, "invalid": [], "warnings": []}
+
+    if salvage_warning:
+        report["salvage_warning"] = salvage_warning
+    return parsed, report
 
 
 def list_kb_versions():

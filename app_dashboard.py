@@ -1020,6 +1020,8 @@ def modal_convert():
                         _parsed, _report = parse_and_save_json(_raw)
                         total_saved += len(_parsed)
                         total_invalid += _report["invalid_count"]
+                        if _report.get("salvage_warning"):
+                            st.warning(f"{_fname}: {_report['salvage_warning']}")
                     except Exception as _exc:
                         st.warning(f"{_fdata['name']}: failed — {_exc}")
             st.success(
@@ -1142,6 +1144,8 @@ def modal_convert():
                 raw = convert_to_json(payload)
                 parsed, report = parse_and_save_json(raw)
                 st.success(f"Saved {len(parsed)} entries to {DATA_DIR}/structured.json")
+                if report.get("salvage_warning"):
+                    st.warning(f"⚠️ Truncated response — {report['salvage_warning']}")
                 if report["invalid_count"]:
                     st.warning(f"{report['invalid_count']} invalid → data/invalid_entries.json")
                 if report["warning_count"]:
