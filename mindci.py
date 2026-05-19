@@ -35,36 +35,74 @@ from pathlib import Path
 
 # ── convert ───────────────────────────────────────────────────────────────────
 def cmd_convert(args) -> int:
-    from config import RAW_DIR, log
-    from pipeline.convert import convert_to_json, parse_and_save_json
+    from config import RAW_DIR, SPLIT_THRESHOLD_WORDS
+    from pipeline.convert import convert_to_json, detect_note_sections, parse_and_save_json
 
     raw_dir = Path(RAW_DIR)
     archive_dir = Path("archive")
     archive_dir.mkdir(parents=True, exist_ok=True)
 
-    notes = sorted(raw_dir.glob("*.txt")) if raw_dir.exists() else []
+    # Accept both .txt and .md (matches the dashboard's file uploader)
+    notes = sorted(raw_dir.glob("*.txt")) + sorted(raw_dir.glob("*.md")) \
+        if raw_dir.exists() else []
     if not notes:
-        print(f"No .txt files in {raw_dir}/ — drop notes there and rerun.")
+        print(f"No .txt / .md files in {raw_dir}/ — drop notes there and rerun.")
         return 0
 
-    combined = []
+    # Split notes into short (batch together) and long (split per-file)
+    short: list[tuple[Path, str]] = []
+    long: list[tuple[Path, str]] = []
     for path in notes:
         text = path.read_text(encoding="utf-8")
-        combined.append(f"--- SOURCE: {path.name} ---\n\n{text}")
-    payload = "\n\n".join(combined)
+        (long if len(text.split()) > SPLIT_THRESHOLD_WORDS else short).append((path, text))
 
-    print(f"Converting {len(notes)} note(s) with Claude…")
-    raw_response = convert_to_json(payload)
-    parsed, report = parse_and_save_json(raw_response)
+    total_saved = 0
+    total_invalid = 0
+    total_warnings = 0
 
-    print(f"  ✓ {len(parsed)} valid entr{'y' if len(parsed) == 1 else 'ies'} saved")
-    if report["invalid_count"]:
-        print(f"  ! {report['invalid_count']} invalid → data/invalid_entries.json")
-    if report["warning_count"]:
-        print(f"  ! {report['warning_count']} soft warning(s)")
+    # ── Short notes: batch into one Claude call (original behaviour) ──────────
+    if short:
+        payload = "\n\n".join(
+            f"--- SOURCE: {p.name} ---\n\n{t}" for p, t in short
+        )
+        print(f"Converting {len(short)} short note(s) with Claude…")
+        raw_response = convert_to_json(payload)
+        parsed, report = parse_and_save_json(raw_response)
+        total_saved += report["valid_count"]
+        total_invalid += report["invalid_count"]
+        total_warnings += report["warning_count"]
+        if report.get("salvage_warning"):
+            print(f"  ⚠  {report['salvage_warning']}")
+
+    # ── Long notes: auto-split, convert each section individually ────────────
+    for path, text in long:
+        sections, strategy = detect_note_sections(text)
+        print(
+            f"  → {path.name}: {len(text.split()):,} words — "
+            f"auto-split into {len(sections)} sections [{strategy}]"
+        )
+        for i, sec in enumerate(sections):
+            sec_fname = f"{path.stem}_part{i + 1}.txt"
+            payload = f"--- SOURCE: {sec_fname} ---\n\n{sec['content']}"
+            try:
+                raw_response = convert_to_json(payload)
+                parsed, report = parse_and_save_json(raw_response)
+                total_saved += report["valid_count"]
+                total_invalid += report["invalid_count"]
+                total_warnings += report["warning_count"]
+                if report.get("salvage_warning"):
+                    print(f"    ⚠  section {i + 1}: {report['salvage_warning']}")
+            except Exception as exc:
+                print(f"    ! section {i + 1} of {path.name} failed: {exc}")
+
+    print(f"  ✓ {total_saved} valid entr{'y' if total_saved == 1 else 'ies'} saved")
+    if total_invalid:
+        print(f"  ! {total_invalid} invalid → data/invalid_entries.json")
+    if total_warnings:
+        print(f"  ! {total_warnings} soft warning(s)")
 
     if not args.no_archive:
-        for path in notes:
+        for path, _ in short + long:
             shutil.move(str(path), str(archive_dir / path.name))
         print(f"  → archived {len(notes)} note(s) to {archive_dir}/")
     return 0

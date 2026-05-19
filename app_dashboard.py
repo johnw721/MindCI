@@ -30,9 +30,10 @@ from config import (
     DATA_DIR,
     OUTPUT_DIR,
     RAW_DIR,
+    SPLIT_THRESHOLD_WORDS,
     load_jd_frequencies,
 )
-from pipeline.convert import convert_to_json, parse_and_save_json
+from pipeline.convert import convert_to_json, detect_note_sections, parse_and_save_json
 from pipeline.generate import (
     build_dynamic_prompt,
     classify,
@@ -118,6 +119,9 @@ def _init_state():
         "convert_enrich_rewritten": None,
         "convert_uploaded_files": [],   # [{name, content}] when multiple files staged
         "convert_file_idx": 0,          # which file is active in multi-file mode
+        "convert_splits": None,             # list[{title, content, word_count}] | None
+        "convert_splits_enabled": [],       # list[bool] — which sections are approved
+        "convert_splits_strategy": "",      # heuristic label from detect_note_sections
         # Generate modal
         "gen_mode": "Flashcards",
         # Card Review modal
@@ -943,6 +947,9 @@ def modal_convert():
                 st.session_state.convert_enrich_questions = None
                 st.session_state.convert_enrich_answers = []
                 st.session_state.convert_enrich_rewritten = None
+                st.session_state.convert_splits = None
+                st.session_state.convert_splits_enabled = []
+                st.session_state.convert_splits_strategy = ""
             text = file_data[selected_idx]["content"]
             st.session_state.convert_filename = file_data[selected_idx]["name"]
     st.session_state.convert_text = text
@@ -976,6 +983,94 @@ def modal_convert():
     if fm_meta:
         st.caption("Detected frontmatter: " +
                    " · ".join(f"`{k}={v}`" for k, v in fm_meta.items()))
+
+    # ── Note splitting (shown when note exceeds threshold) ─────────────────
+    _word_count = len(text.split()) if text.strip() else 0
+    if _word_count >= SPLIT_THRESHOLD_WORDS:
+        _sp_col1, _sp_col2 = st.columns([3, 1])
+        _sp_col1.info(
+            f"This note is long (~{_word_count:,} words). "
+            "Detect sections to convert each chunk separately.",
+            icon="📄",
+        )
+        with _sp_col1:
+            if st.button("Detect sections", key="m_conv_detect_splits"):
+                sections, strategy = detect_note_sections(text)
+                st.session_state.convert_splits = sections
+                st.session_state.convert_splits_enabled = [True] * len(sections)
+                st.session_state.convert_splits_strategy = strategy
+                st.rerun()
+        if st.session_state.convert_splits is not None:
+            with _sp_col2:
+                if st.button("Clear splits", key="m_conv_clear_splits"):
+                    st.session_state.convert_splits = None
+                    st.session_state.convert_splits_enabled = []
+                    st.rerun()
+
+    if st.session_state.convert_splits is not None:
+        _splits = st.session_state.convert_splits
+        _enabled = list(st.session_state.convert_splits_enabled)
+        if len(_enabled) != len(_splits):
+            _enabled = [True] * len(_splits)
+
+        st.markdown(f"##### {len(_splits)} detected sections — select which to convert")
+        if st.session_state.convert_splits_strategy:
+            st.caption(f"Split on: {st.session_state.convert_splits_strategy}")
+        for _si, _sec in enumerate(_splits):
+            _c1, _c2 = st.columns([1, 12])
+            _enabled[_si] = _c1.checkbox(
+                "", value=_enabled[_si], key=f"m_conv_split_en_{_si}",
+                label_visibility="collapsed",
+            )
+            _c2.markdown(f"**{_sec['title']}** · {_sec['word_count']:,} words")
+            with st.expander("Preview", expanded=False):
+                st.text(_sec["content"][:400] +
+                        ("…" if len(_sec["content"]) > 400 else ""))
+        st.session_state.convert_splits_enabled = _enabled
+
+        _n_sel = sum(_enabled)
+        if st.button(
+            f"Convert {_n_sel} selected section{'s' if _n_sel != 1 else ''}",
+            type="primary", key="m_conv_splits_commit", disabled=_n_sel == 0,
+        ):
+            _split_saved = 0
+            _split_invalid = 0
+            _base_fname = (st.session_state.convert_filename
+                           or f"note_{datetime.now():%Y%m%d_%H%M%S}")
+            os.makedirs(RAW_DIR, exist_ok=True)
+            with st.spinner(f"Converting {_n_sel} sections with Claude…"):
+                for _si, _sec in enumerate(_splits):
+                    if not _enabled[_si]:
+                        continue
+                    _sec_fname = f"{_base_fname}_part{_si + 1}.txt"
+                    Path(RAW_DIR, _sec_fname).write_text(
+                        _sec["content"], encoding="utf-8"
+                    )
+                    try:
+                        _payload = (f"--- SOURCE: {_sec_fname} ---\n\n"
+                                    f"{_sec['content']}")
+                        _raw = convert_to_json(_payload)
+                        _parsed_s, _report_s = parse_and_save_json(_raw)
+                        _split_saved += len(_parsed_s)
+                        _split_invalid += _report_s["invalid_count"]
+                        if _report_s.get("salvage_warning"):
+                            st.warning(
+                                f"'{_sec['title']}': {_report_s['salvage_warning']}"
+                            )
+                    except Exception as _exc:
+                        st.warning(f"'{_sec['title']}': failed — {_exc}")
+            st.success(
+                f"Saved {_split_saved} entries from {_n_sel} sections "
+                f"to {DATA_DIR}/structured.json"
+            )
+            if _split_invalid:
+                st.warning(f"{_split_invalid} invalid entries → data/invalid_entries.json")
+            st.session_state.convert_splits = None
+            st.session_state.convert_splits_enabled = []
+            st.session_state.convert_preview = None
+            st.session_state.convert_quality = None
+
+        st.markdown("---")
 
     cols = st.columns(4)
     with cols[0]:
@@ -1161,6 +1256,9 @@ def modal_convert():
         st.session_state.active_modal = None
         st.session_state.convert_uploaded_files = []
         st.session_state.convert_file_idx = 0
+        st.session_state.convert_splits = None
+        st.session_state.convert_splits_enabled = []
+        st.session_state.convert_splits_strategy = ""
         st.rerun()
 
 

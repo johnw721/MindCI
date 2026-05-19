@@ -116,6 +116,8 @@ MAX_TOKENS_BATCH      = int(os.environ.get("MINDCI_MAX_TOKENS_BATCH",      3000)
 MAX_TOKENS_GENERATION = int(os.environ.get("MINDCI_MAX_TOKENS_GENERATION", 4096))   # flashcards, scenarios, weekly
 MAX_TOKENS_CONVERT    = int(os.environ.get("MINDCI_MAX_TOKENS_CONVERT",    8192))   # note conversion (higher headroom for long notes)
 
+SPLIT_THRESHOLD_WORDS = int(os.environ.get("MINDCI_SPLIT_THRESHOLD_WORDS", 500))    # word count above which the split suggestion appears
+
 # USD per million tokens. Defaults are sensible placeholders — verify against
 # Anthropic's current pricing for the active model and override via env vars
 # if your model or pricing has changed.

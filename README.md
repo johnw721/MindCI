@@ -89,15 +89,27 @@ MindCI/
 │   ├── interview_postmortem.md
 │   ├── weak_topic_drill.md
 │   └── resume_claim_extraction.md
-├── tests/                         # pytest suite (74 tests, runs in <1s)
+├── tests/                         # pytest suite (88 tests, runs in <1s)
 │   ├── conftest.py                # env stubbing + lazy-client monkeypatch
+│   ├── test_anki_sync.py
+│   ├── test_calibration.py
+│   ├── test_capture.py
 │   ├── test_client_retry.py
+│   ├── test_code_download.py
 │   ├── test_config.py
+│   ├── test_confidence_history.py
+│   ├── test_convert_helpers.py    # _salvage_partial_json + detect_note_sections
 │   ├── test_cost_telemetry.py
+│   ├── test_integration_e2e.py
 │   ├── test_jd_parsing.py
+│   ├── test_markdown_frontmatter.py
 │   ├── test_quality.py
+│   ├── test_response_cache.py
+│   ├── test_resume_check.py
 │   ├── test_scenarios.py
-│   └── test_validation.py
+│   ├── test_url_ingest.py
+│   ├── test_validation.py
+│   └── test_weekly_progress.py
 ├── raw/           # drop .txt notes here (gitignored)
 ├── data/          # structured.json, market_frequencies.json, usage.json, history/ (gitignored)
 ├── jd_reports/    # saved JD reports for frequency aggregation (gitignored)
@@ -126,9 +138,11 @@ Two quality layers before the API call:
 
 **Note enrichment assistant** — Claude generates 4-5 targeted follow-up questions for thin notes. Answer inline, Claude rewrites the note into a CPM-marked version, one click promotes it to the editor.
 
-After commit, Claude structures notes into `data/structured.json` by type: `project`, `certification`, or `exploration`. Pydantic-validated; invalid entries saved separately to `data/invalid_entries.json`. Defaulted fields surface as warnings. Previous versions of `structured.json` are versioned to `data/history/` (copy-on-write).
+After commit, Claude structures notes into `data/structured.json` by type: `project`, `certification`, or `exploration`. Pydantic-validated; invalid entries saved separately to `data/invalid_entries.json`. Defaulted fields surface as warnings. New entries are merged with the existing KB (deduplicated by `source` field — re-converting a note replaces its previous entries; split sections accumulate correctly because each section gets a unique `_partN` source name). Previous versions of `structured.json` are versioned to `data/history/` before each write (copy-on-write).
 
 **Markdown + frontmatter ingest** — the file uploader accepts both `.txt` and `.md`, and supports selecting multiple files at once (hold Ctrl/⌘ in the file picker). Single-file uploads behave as before. When 2+ files are selected, a selectbox lets you switch between them for individual quality-check / enrichment / convert workflows; switching clears per-note state so each file starts fresh. An **⚡ Batch convert all N files** button appears below the action row and runs the full `convert_to_json` → `parse_and_save_json` pipeline on every staged file in sequence (including frontmatter detection), reporting total entries saved and invalid count when done.
+
+**Long-note splitting** — when a note exceeds `SPLIT_THRESHOLD_WORDS` (default 500), a "Detect sections" button appears above the action row. Clicking it runs a pure-Python heuristic split (no API call) using the following priority: explicit CPM `——SECTION——` markers → markdown headings (`#`–`####`) → triple blank lines → double blank lines (grouped so no chunk is tiny) → fallback bisect at the nearest paragraph boundary to the midpoint. The detected sections are shown as a list with title, word count, and a 4-line preview; checkboxes let you approve or skip each one; the strategy that fired (e.g. "markdown headings", "triple blank lines", "midpoint split") is shown as a caption so you know how the boundaries were determined. "Convert N selected sections" then runs `convert_to_json` + `parse_and_save_json` on each approved chunk independently, accumulating all results into `data/structured.json` via the merge/dedup path. The full note "Convert & save" button still works on the whole note if you prefer to skip splitting.
 
 If a `.md` file starts with a YAML-style `---` frontmatter block (top-level `key: value` pairs, no nested structures), `pipeline.convert.parse_markdown_with_frontmatter` extracts it and surfaces a "Detected frontmatter" caption. Detected metadata is handed to Claude as a `KNOWN METADATA` hint so pre-known fields (type, confidence, difficulty, etc.) don't get re-inferred and tokens are saved. Drag Obsidian notes in directly — no `.txt` conversion required.
 
@@ -232,6 +246,7 @@ All env-overridable, sensible defaults in `config.py`.
 | `MINDCI_MAX_TOKENS_BATCH` | `3000` | Batch JD analysis |
 | `MINDCI_MAX_TOKENS_GENERATION` | `4096` | Flashcards, scenarios, weekly plan |
 | `MINDCI_MAX_TOKENS_CONVERT` | `8192` | Note conversion — higher headroom for long notes; raise if very dense multi-topic notes still truncate |
+| `MINDCI_SPLIT_THRESHOLD_WORDS` | `500` | Word count above which the Convert modal surfaces the "Detect sections" split suggestion |
 | `MINDCI_INPUT_PRICE_PER_MTOK` | `3.0` | USD per million input tokens |
 | `MINDCI_OUTPUT_PRICE_PER_MTOK` | `15.0` | USD per million output tokens |
 | `MINDCI_CACHE_DISABLE` | unset | Set to bypass the response cache (forces every call through to the API) |
@@ -249,7 +264,7 @@ All env-overridable, sensible defaults in `config.py`.
 
 ```bash
 python mindci.py run                  # convert + generate
-python mindci.py convert              # raw/*.txt → data/structured.json
+python mindci.py convert              # raw/*.txt and *.md → data/structured.json (long notes auto-split)
 python mindci.py generate             # KB → output/anki.csv + questions.md
 python mindci.py aggregate            # rebuild data/market_frequencies.json
 python mindci.py dashboard            # launch streamlit dashboard
@@ -266,7 +281,9 @@ python mindci.py convert --no-archive   # leave notes in raw/ instead of archivi
 python mindci.py watch --no-archive     # same flag works in watch mode
 ```
 
-`watch` uses `watchdog` with a 2.5s debounce, so editor "atomic save" sequences trigger only one convert run. Drop a `.txt` into `raw/` from anywhere (Dropbox/Drive sync, mobile shortcut, scp) and it's structured and indexed within seconds.
+`convert` accepts both `.txt` and `.md` files. Notes exceeding `SPLIT_THRESHOLD_WORDS` (default 500) are automatically split using the same heuristic as the dashboard (CPM markers → markdown headings → triple blank lines → bisect) and each section is converted independently. Results are merged into the existing KB — re-converting a note replaces only its own entries.
+
+`watch` uses `watchdog` with a 2.5s debounce, so editor "atomic save" sequences trigger only one convert run. Drop a `.txt` or `.md` into `raw/` from anywhere (Dropbox/Drive sync, mobile shortcut, scp) and it's structured and indexed within seconds. Long notes are auto-split before hitting the API, so the watcher handles dense notes the same way the dashboard does.
 
 `capture` pairs with `watch` for terminal-native note-taking. Run `mindci.py capture "your one-liner"` from any shell and it writes a timestamped `capture_YYYYMMDD_HHMMSS.txt` into `raw/`. If `watch` is running in another terminal, the convert pipeline kicks in within seconds. Use `--name <slug>` to set a custom filename instead of the timestamp. Removes the context-switching cost of opening a file or the dashboard mid-task — capture the thought, keep coding.
 
@@ -280,7 +297,7 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 pytest tests/ -v
 ```
 
-74 deterministic tests, runs in well under a second. Coverage:
+88 deterministic tests, runs in well under a second. Coverage:
 
 - `test_validation.py` — Pydantic schemas, type rejection, normalization, warnings
 - `test_quality.py` — note quality scoring, KB entry scoring, type detection
@@ -300,6 +317,7 @@ pytest tests/ -v
 - `test_anki_sync.py` — `is_available` true/false paths, `addNote` JSON-RPC payload shape, error-response surfacing
 - `test_code_download.py` — language detection (Terraform / YAML / Python / JSON / fallback)
 - `test_capture.py` — `mindci.py capture` writes timestamped file, honors `--name`, rejects empty input
+- `test_convert_helpers.py` — `_salvage_partial_json` (complete array, truncation before `]`, mid-string truncation, escaped quotes, nested objects, empty/junk inputs, multiple-complete-one-truncated); `detect_note_sections` (CPM markers, markdown headings, hash stripping from titles, triple blank lines, midpoint fallback, word count accuracy, strategy label type)
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 

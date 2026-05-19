@@ -1,8 +1,10 @@
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
+from pathlib import Path
 
 # Add project root to path for validation + config imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,13 +15,31 @@ from pipeline._client import call_with_retry
 _log = logging.getLogger("mindci")
 
 
-def _repair_json(bad_json):
-    """Ask Claude to fix its own malformed JSON output."""
-    repair_prompt = f"""The following JSON is malformed. Fix it and return ONLY valid JSON, nothing else.
+def _repair_json(bad_json: str, is_truncation: bool = False) -> str:
+    """Ask Claude to fix its own malformed JSON output.
 
-MALFORMED JSON:
-{bad_json}"""
-    return call_with_retry(repair_prompt, max_tokens=MAX_TOKENS_CONVERT)
+    When ``is_truncation`` is True and the payload is large, sends only the
+    head + tail instead of the full response — the middle is already valid and
+    Claude can't do anything useful with it.  Asks for a single recovered
+    object; the caller is responsible for wrapping it in a list if needed.
+    """
+    if is_truncation and len(bad_json) > 1200:
+        snippet = bad_json[:300] + "\n...[middle omitted]...\n" + bad_json[-800:]
+        prompt = (
+            "A JSON array was cut off before it could finish. "
+            "Here is the start and the truncated end:\n\n"
+            f"{snippet}\n\n"
+            "Return ONLY the last incomplete entry as a single valid JSON object "
+            "(not an array), completing any truncated strings or fields. "
+            "If the entry cannot be recovered, return an empty object: {}"
+        )
+    else:
+        prompt = (
+            "The following JSON is malformed. "
+            "Fix it and return ONLY valid JSON, nothing else.\n\n"
+            f"MALFORMED JSON:\n{bad_json}"
+        )
+    return call_with_retry(prompt, max_tokens=MAX_TOKENS_CONVERT)
 
 
 def _salvage_partial_json(text: str) -> list:
@@ -61,6 +81,98 @@ def _salvage_partial_json(text: str) -> list:
                     start = None
         i += 1
     return objects
+
+
+def detect_note_sections(
+    text: str, min_chars: int = 150
+) -> tuple[list[dict], str]:
+    """Heuristically split a long note into logical sections for user review.
+
+    Strategies tried in priority order:
+    1. Explicit CPM ``——SECTION——`` markers
+    2. Markdown headings (``#`` through ``####``)
+    3. Triple-or-more blank lines (strong section-break signal)
+    4. Double blank lines, grouped so no chunk is tiny
+    5. Fallback: bisect at the paragraph boundary nearest the midpoint
+
+    Returns ``(sections, strategy_label)`` where sections is a list of
+    ``{title, content, word_count}`` dicts and strategy_label names which
+    heuristic fired so callers can surface it to the user.
+    """
+    # Strategy 1: explicit CPM section markers
+    if re.search(r'——SECTION——', text):
+        parts = re.split(r'——SECTION——', text)
+        chunks = [p.strip() for p in parts if len(p.strip()) >= min_chars]
+        if len(chunks) >= 2:
+            return _chunks_to_section_dicts(chunks), "CPM section markers"
+
+    # Strategy 2: markdown headings
+    heading_re = re.compile(r'^#{1,4}\s+\S', re.MULTILINE)
+    positions = [m.start() for m in heading_re.finditer(text)]
+    if len(positions) >= 2:
+        chunks = []
+        for i, pos in enumerate(positions):
+            end = positions[i + 1] if i + 1 < len(positions) else len(text)
+            chunk = text[pos:end].strip()
+            if len(chunk) >= min_chars:
+                chunks.append(chunk)
+        if len(chunks) >= 2:
+            return _chunks_to_section_dicts(chunks), "markdown headings"
+
+    # Strategy 3: triple+ blank lines
+    parts = re.split(r'\n{3,}', text)
+    chunks = [p.strip() for p in parts if len(p.strip()) >= min_chars]
+    if len(chunks) >= 2:
+        return _chunks_to_section_dicts(chunks), "triple blank lines"
+
+    # Strategy 4: double blank lines, grouped to avoid tiny chunks
+    parts = re.split(r'\n{2,}', text)
+    chunks = [p.strip() for p in parts if len(p.strip()) >= min_chars]
+    if len(chunks) >= 2:
+        return _group_small_sections(chunks, target_chars=1500), "double blank lines"
+
+    # Fallback: bisect at the nearest paragraph boundary to the midpoint
+    mid = len(text) // 2
+    split_pos = text.find('\n\n', mid)
+    if split_pos == -1:
+        split_pos = text.find('\n', mid)
+    if split_pos == -1:
+        split_pos = mid
+    halves = [text[:split_pos].strip(), text[split_pos:].strip()]
+    return (
+        _chunks_to_section_dicts([h for h in halves if h]),
+        "midpoint split (no strong boundaries found)",
+    )
+
+
+def _chunks_to_section_dicts(chunks: list[str]) -> list[dict]:
+    result = []
+    for i, content in enumerate(chunks):
+        lines = [l for l in content.splitlines() if l.strip()]
+        raw_title = lines[0][:70] if lines else f"Section {i + 1}"
+        title = re.sub(r'^#+\s*', '', raw_title).strip() or f"Section {i + 1}"
+        result.append({
+            "title": title,
+            "content": content,
+            "word_count": len(content.split()),
+        })
+    return result
+
+
+def _group_small_sections(chunks: list[str], target_chars: int = 1500) -> list[dict]:
+    """Merge consecutive small chunks until the group reaches target_chars."""
+    groups: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for chunk in chunks:
+        current.append(chunk)
+        current_len += len(chunk)
+        if current_len >= target_chars:
+            groups.append("\n\n".join(current))
+            current, current_len = [], 0
+    if current:
+        groups.append("\n\n".join(current))
+    return _chunks_to_section_dicts(groups)
 
 
 def _strip_fences(text):
@@ -169,10 +281,14 @@ def parse_and_save_json(raw_response):
             )
             _log.warning("convert: %s", salvage_warning)
         else:
-            # Attempt 3: ask Claude to repair (last resort)
+            # Attempt 3: ask Claude to repair (last resort).
+            # Pass is_truncation so large payloads are trimmed to head+tail.
+            is_trunc = "Unterminated string" in str(first_err)
             try:
-                repaired = _strip_fences(_repair_json(clean))
-                parsed = json.loads(repaired)
+                repaired_raw = _strip_fences(_repair_json(clean, is_truncation=is_trunc))
+                repaired_obj = json.loads(repaired_raw)
+                # Repair may return a single object for the truncation path
+                parsed = [repaired_obj] if isinstance(repaired_obj, dict) else repaired_obj
             except (json.JSONDecodeError, RuntimeError) as e:
                 raise ValueError(
                     f"Could not parse Claude response as JSON after repair attempt.\n"
@@ -187,26 +303,50 @@ def parse_and_save_json(raw_response):
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(history_dir, exist_ok=True)
 
-    # Copy-on-write: version the existing file before overwriting
     current_path = os.path.join(DATA_DIR, "structured.json")
+
+    # Load existing KB and version it before any write
+    existing_entries: list = []
     if os.path.exists(current_path):
+        try:
+            data = json.loads(Path(current_path).read_text(encoding="utf-8"))
+            existing_entries = data if isinstance(data, list) else []
+        except Exception:
+            existing_entries = []
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        versioned_path = os.path.join(history_dir, f"structured_{timestamp}.json")
-        with open(current_path, "r", encoding="utf-8") as f:
-            existing = f.read()
-        with open(versioned_path, "w", encoding="utf-8") as f:
-            f.write(existing)
+        versioned = os.path.join(history_dir, f"structured_{timestamp}.json")
+        with open(versioned, "w", encoding="utf-8") as fv:
+            json.dump(existing_entries, fv, indent=2, ensure_ascii=False)
 
-    # Validate and normalize before saving
+    # Validate new entries only so the report counts reflect this batch
     try:
-        from validation import validate_and_save
-        report = validate_and_save(parsed, current_path)
+        from validation import validate_entries
+        valid_new, invalid_new, warnings_new = validate_entries(parsed)
     except ImportError:
-        # Fallback if validation not available
-        with open(current_path, "w", encoding="utf-8") as f:
-            json.dump(parsed, f, indent=2, ensure_ascii=False)
-        report = {"valid_count": len(parsed), "invalid_count": 0, "warning_count": 0, "invalid": [], "warnings": []}
+        valid_new, invalid_new, warnings_new = list(parsed), [], []
 
+    # Deduplicate: drop retained entries whose source matches a new one.
+    # Re-converting a note replaces its previous entries; split sections
+    # accumulate correctly because each gets a unique _partN source name.
+    new_sources = {e.get("source", "") for e in valid_new if e.get("source")}
+    retained = [e for e in existing_entries if e.get("source", "") not in new_sources]
+    merged = retained + valid_new
+
+    with open(current_path, "w", encoding="utf-8") as f:
+        json.dump(merged, f, indent=2, ensure_ascii=False)
+
+    if invalid_new:
+        invalid_path = os.path.join(DATA_DIR, "invalid_entries.json")
+        with open(invalid_path, "w", encoding="utf-8") as f:
+            json.dump(invalid_new, f, indent=2, ensure_ascii=False)
+
+    report = {
+        "valid_count": len(valid_new),
+        "invalid_count": len(invalid_new),
+        "warning_count": len(warnings_new),
+        "invalid": invalid_new,
+        "warnings": warnings_new,
+    }
     if salvage_warning:
         report["salvage_warning"] = salvage_warning
     return parsed, report
