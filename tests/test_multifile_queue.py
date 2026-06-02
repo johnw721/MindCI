@@ -15,7 +15,6 @@ operations performed by modal_convert() in app_dashboard.py after a successful
 
 import pytest
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers that mirror the state-mutation logic inside modal_convert()
 # ─────────────────────────────────────────────────────────────────────────────
