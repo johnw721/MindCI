@@ -1249,6 +1249,36 @@ def modal_convert():
                             st.caption(f"{w['label']}: {', '.join(w['warnings'])}")
                 st.session_state.convert_preview = None
                 st.session_state.convert_quality = None
+
+                # ── Multi-file: remove the just-converted file from the queue ──
+                _staged = st.session_state.convert_uploaded_files
+                if len(_staged) > 1:
+                    _idx = st.session_state.convert_file_idx
+                    _staged.pop(_idx)
+                    st.session_state.convert_uploaded_files = _staged
+                    # Keep index in bounds; stay on same position (now the next file)
+                    st.session_state.convert_file_idx = min(_idx, len(_staged) - 1)
+                    # Reset per-note state for the incoming file
+                    st.session_state.convert_preview = None
+                    st.session_state.convert_quality = None
+                    st.session_state.convert_enrich_questions = None
+                    st.session_state.convert_enrich_answers = []
+                    st.session_state.convert_enrich_rewritten = None
+                    st.session_state.convert_splits = None
+                    st.session_state.convert_splits_enabled = []
+                    st.session_state.convert_splits_strategy = ""
+                    st.rerun()
+                elif len(_staged) == 1:
+                    # Last file just converted — auto-close the modal
+                    st.session_state.active_modal = None
+                    st.session_state.convert_uploaded_files = []
+                    st.session_state.convert_file_idx = 0
+                    st.session_state.convert_preview = None
+                    st.session_state.convert_quality = None
+                    st.session_state.convert_splits = None
+                    st.session_state.convert_splits_enabled = []
+                    st.session_state.convert_splits_strategy = ""
+                    st.rerun()
             except Exception as e:
                 st.error(f"Convert failed: {e}")
 
