@@ -1,0 +1,201 @@
+{
+  "_meta": {
+    "description": "Golden test set for MindCI gap-analysis evaluation. Each case is scored against the SHARED knowledge base in evals/kb_snapshot.json (a frozen copy of data/structured.json).",
+    "kb_snapshot": "kb_snapshot.json",
+    "labeling": "expected_gaps/expected_matches are the COMPLETE set of distinct skills each JD explicitly demands, partitioned by whether the snapshot KB genuinely covers them. Labels were verified by inspecting the KB, not by the app's loose matcher (which over-matches, e.g. 'RDS' in 'guards').",
+    "how_to_extend": "Append an object with: id, jd_text, expected_gaps[], expected_matches[], rationale. Keep JDs tightly scoped so the gap/match sets stay complete and enumerable. Re-run `python eval.py`.",
+    "case_count": 12
+  },
+  "cases": [
+    {
+      "id": "platform-k8s-heavy",
+      "role_title_hint": "Kubernetes Platform Engineer",
+      "jd_text": "Platform Engineer. You will operate our production Kubernetes clusters and the GitOps delivery stack. Required: Kubernetes, Helm, ArgoCD, Terraform, Docker, and Prometheus/Grafana for monitoring. CI/CD pipeline ownership is core. Experience packaging workloads with Helm charts and progressive delivery via ArgoCD.",
+      "expected_gaps": [
+        "Helm",
+        "ArgoCD",
+        "Prometheus",
+        "Grafana"
+      ],
+      "expected_matches": [
+        "Kubernetes",
+        "Terraform",
+        "Docker",
+        "CI/CD"
+      ],
+      "rationale": "KB has Kubernetes (cluster-outage notes), Terraform (cert + S3 remote state), Docker (CI regression-catcher), and CI/CD. KB has zero Helm/ArgoCD/Prometheus/Grafana content."
+    },
+    {
+      "id": "serverless-aws-strong-fit",
+      "role_title_hint": "Serverless Backend Engineer",
+      "jd_text": "Serverless Backend Engineer. Build event-driven services on AWS Lambda and API Gateway, persist to DynamoDB and S3, enforce least-privilege IAM, all in Python. Bonus: EventBridge for choreography.",
+      "expected_gaps": [
+        "EventBridge"
+      ],
+      "expected_matches": [
+        "AWS Lambda",
+        "API Gateway",
+        "DynamoDB",
+        "S3",
+        "IAM",
+        "Python"
+      ],
+      "rationale": "KB has boto3/Bedrock async-notify Lambda, API Gateway, DynamoDB TTL/KeySchema, S3 remote state, resource-ARN-scoped IAM, and heavy Python. No EventBridge content."
+    },
+    {
+      "id": "config-management-ansible",
+      "role_title_hint": "Infrastructure Automation Engineer",
+      "jd_text": "Infrastructure Automation Engineer. Manage fleet configuration with Ansible and Packer image builds. IaC with Terraform. Scripting in Python.",
+      "expected_gaps": [
+        "Ansible",
+        "Packer"
+      ],
+      "expected_matches": [
+        "Terraform",
+        "Python"
+      ],
+      "rationale": "KB has Terraform and Python but nothing on Ansible or Packer."
+    },
+    {
+      "id": "observability-role",
+      "role_title_hint": "Observability Engineer",
+      "jd_text": "Observability Engineer. Stand up Prometheus, Grafana, and Datadog dashboards. Instrument services and wire CloudWatch alarms. Automate with Python.",
+      "expected_gaps": [
+        "Prometheus",
+        "Grafana",
+        "Datadog"
+      ],
+      "expected_matches": [
+        "CloudWatch",
+        "Python"
+      ],
+      "rationale": "KB has CloudWatch alarms on SQS DLQ and Python. No Prometheus/Grafana/Datadog content."
+    },
+    {
+      "id": "healthcare-cloud",
+      "role_title_hint": "Healthcare Cloud Engineer",
+      "jd_text": "Cloud Engineer (Health). Provision VPC-isolated AWS infra with Terraform, run workloads on Lambda. Must understand HL7/FHIR data standards and operate RDS.",
+      "expected_gaps": [
+        "HL7/FHIR",
+        "RDS"
+      ],
+      "expected_matches": [
+        "VPC",
+        "Terraform",
+        "AWS Lambda"
+      ],
+      "rationale": "KB has VPC interface-endpoint isolation, Terraform, and Lambda. No HL7/FHIR and no genuine RDS operational content (matcher false-positives RDS via 'guards')."
+    },
+    {
+      "id": "iam-security",
+      "role_title_hint": "Cloud Security Engineer",
+      "jd_text": "Cloud Security Engineer. Own IAM policy design, secrets in HashiCorp Vault, and SSO via Okta. Implement HMAC request signing for service-to-service auth.",
+      "expected_gaps": [
+        "Vault",
+        "Okta",
+        "SSO"
+      ],
+      "expected_matches": [
+        "IAM",
+        "HMAC"
+      ],
+      "rationale": "KB has resource-ARN IAM policies and HMAC-SHA256 webhook verification. No Vault/Okta/SSO content."
+    },
+    {
+      "id": "mixed-cloud-engineer",
+      "role_title_hint": "Cloud Engineer",
+      "jd_text": "Cloud Engineer. Required: Terraform, Docker, AWS Lambda, Python, and CI/CD. Nice to have: EKS and Helm for our container migration, plus Prometheus monitoring.",
+      "expected_gaps": [
+        "EKS",
+        "Helm",
+        "Prometheus"
+      ],
+      "expected_matches": [
+        "Terraform",
+        "Docker",
+        "AWS Lambda",
+        "Python",
+        "CI/CD"
+      ],
+      "rationale": "Five clear KB matches; EKS/Helm/Prometheus absent. Tests balanced precision/recall."
+    },
+    {
+      "id": "gitops-platform",
+      "role_title_hint": "GitOps Platform Engineer",
+      "jd_text": "GitOps Platform Engineer. Drive declarative delivery with ArgoCD and Flux, service mesh with Istio, on Kubernetes. Container builds with Docker, pipelines in GitHub Actions.",
+      "expected_gaps": [
+        "ArgoCD",
+        "Flux",
+        "Istio",
+        "GitOps"
+      ],
+      "expected_matches": [
+        "Kubernetes",
+        "Docker",
+        "GitHub Actions"
+      ],
+      "rationale": "KB has Kubernetes, Docker, GitHub Actions. No ArgoCD/Flux/Istio/GitOps (service-mesh matcher hits are 'service worker' false positives)."
+    },
+    {
+      "id": "integration-automation",
+      "role_title_hint": "IT Systems / Integration Engineer",
+      "jd_text": "Integration Engineer. Build workflow automations with Zapier and Workato, administer Okta SSO. Wire webhooks with HMAC verification and write glue in Python.",
+      "expected_gaps": [
+        "Zapier",
+        "Workato",
+        "Okta",
+        "SSO"
+      ],
+      "expected_matches": [
+        "webhook",
+        "HMAC",
+        "Python"
+      ],
+      "rationale": "KB is rich in webhook handling (Gumroad parser, replay prevention) and HMAC + Python. No Zapier/Workato/Okta/SSO."
+    },
+    {
+      "id": "all-match-sanity",
+      "role_title_hint": "Backend Cloud Engineer",
+      "jd_text": "Backend Cloud Engineer. Stack is Terraform, Python, AWS Lambda, API Gateway, and DynamoDB. That's the whole stack.",
+      "expected_gaps": [],
+      "expected_matches": [
+        "Terraform",
+        "Python",
+        "AWS Lambda",
+        "API Gateway",
+        "DynamoDB"
+      ],
+      "rationale": "Edge case: every demanded skill is in the KB. A well-behaved model should report ~no priority gaps; tests gap precision (false-positive gaps hurt)."
+    },
+    {
+      "id": "all-gap-sanity",
+      "role_title_hint": "SRE (Observability-heavy)",
+      "jd_text": "SRE. You must have deep Prometheus, Grafana, Ansible, Helm, and ArgoCD experience. These five are hard requirements.",
+      "expected_gaps": [
+        "Prometheus",
+        "Grafana",
+        "Ansible",
+        "Helm",
+        "ArgoCD"
+      ],
+      "expected_matches": [],
+      "rationale": "Edge case: nothing demanded is in the KB. Tests gap recall (missing a gap hurts) and that the model doesn't fabricate matches."
+    },
+    {
+      "id": "sre-incident",
+      "role_title_hint": "Site Reliability Engineer",
+      "jd_text": "SRE. Operate Kubernetes in production, lead incident response and outage triage, build CI/CD, monitor with Prometheus and Grafana, page via PagerDuty. Python automation.",
+      "expected_gaps": [
+        "Prometheus",
+        "Grafana",
+        "PagerDuty"
+      ],
+      "expected_matches": [
+        "Kubernetes",
+        "CI/CD",
+        "Python"
+      ],
+      "rationale": "KB Kubernetes notes explicitly cover incident response, blast-radius and outage investigation, plus CI/CD and Python. No Prometheus/Grafana/PagerDuty."
+    }
+  ]
+}

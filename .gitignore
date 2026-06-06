@@ -21,3 +21,5 @@ pytest-cache-files-*/
 Thumbs.db
 desktop.ini
 CLAUDE.md
+# eval.py --json result dumps
+runs/

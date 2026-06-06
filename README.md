@@ -295,13 +295,62 @@ python mindci.py watch --no-archive     # same flag works in watch mode
 
 ---
 
+## Evaluation harness
+
+Beyond unit tests, `eval.py` is a re-runnable **evaluation** of the gap-analysis
+path (`pipeline.jd_analyzer.run_gap_analysis`) — the call that cross-references
+the knowledge base against a job description. It exists to catch regressions on
+prompt/model changes and to describe MindCI's reliability as a real evaluation
+rather than as error handling.
+
+```bash
+python eval.py                # all golden cases against config.MODEL
+python eval.py --model X      # evaluate a specific model string
+python eval.py --limit 3      # cheap smoke run
+python eval.py --json runs/today.json
+```
+
+Phase 1 reports two things. **Parse reliability** — each structured response is
+classified `first_try` / `repaired` / `failed` (the `repaired` tier reuses
+`pipeline.convert._repair_json` and quantifies what a repair fallback on the
+analysis path would recover, since that path has none today). **Gap-detection
+quality** — precision and recall of `priority_gaps`, reported separately, plus
+skill matching, scored against ~12 hand-labeled cases in `evals/golden_cases.json`
+that all run against a frozen KB snapshot (`evals/kb_snapshot.json`). Scoring
+uses a stricter word-boundary matcher than the app's loose `resume_check`
+matcher, on purpose. The response cache is disabled per run so a cached reply
+can't mask a regression. Full details: [`evals/README.md`](evals/README.md).
+
+The prompt the harness sends is the exact production prompt: `run_gap_analysis`
+was refactored to delegate to `jd_analyzer.build_gap_analysis_prompt`, which the
+harness reuses so the two can never drift.
+
+Phase 1 also reports a deterministic **hallucination rate** — the share of
+asserted skills whose tokens never appear in the JD text (fabricated
+requirements). Phase 2 adds three opt-in checks:
+
+```bash
+python eval.py --consistency 5   # run each case 5x; gap-set stability + score spread
+python eval.py --judge           # LLM-as-judge: explanation usefulness (1-5 rubric)
+```
+
+**Consistency** measures flake — mean pairwise Jaccard of the gap set across N
+repeats (1.00 = identical every run), plus readiness-score stdev — so a change
+can be judged on stability, not one lucky run. **LLM-as-judge** scores
+specificity / actionability / grounding of the explanations, and ships with a
+self-validation calibration test (`judge.validate_judge`) that fails if the
+judge can't rank a strong explanation above a deliberately useless one. Full
+details and the judge-validation roadmap: [`evals/README.md`](evals/README.md).
+
+---
+
 ## Tests
 
 ```bash
 pytest tests/ -v
 ```
 
-88 deterministic tests, runs in well under a second. Coverage:
+158 deterministic tests, runs in well under a second. Coverage:
 
 - `test_validation.py` — Pydantic schemas, type rejection, normalization, warnings
 - `test_quality.py` — note quality scoring, KB entry scoring, type detection
@@ -322,6 +371,9 @@ pytest tests/ -v
 - `test_code_download.py` — language detection (Terraform / YAML / Python / JSON / fallback)
 - `test_capture.py` — `mindci.py capture` writes timestamped file, honors `--name`, rejects empty input
 - `test_convert_helpers.py` — `_salvage_partial_json` (complete array, truncation before `]`, mid-string truncation, escaped quotes, nested objects, empty/junk inputs, multiple-complete-one-truncated); `detect_note_sections` (CPM markers, markdown headings, hash stripping from titles, triple blank lines, midpoint fallback, word count accuracy, strategy label type)
+- `test_eval_harness.py` — eval scoring + reliability: `domain_match` positive/negative (incl. the loose-matcher false positives it must reject), `score_set` precision/recall with empty-set conventions, `micro_average`, `classify_parse` (first_try/repaired/failed), domain extraction with status filtering, and a fully offline end-to-end `harness.run`
+- `test_jd_prompt_builder.py` — guards the `build_gap_analysis_prompt` extraction: `run_gap_analysis` sends exactly the builder's output (plain + resume), schema keys present, resume buckets gated on claims
+- `test_eval_phase2.py` — Phase 2 eval (all offline): grounding/hallucination flagging, consistency stability (perfectly-stable + flake detection, canonical-key folding), LLM-as-judge scoring/clamping/parse-failure handling, and the judge self-validation (passes on a discriminating judge, fails on a blind one)
 
 `tests/conftest.py` sets `MINDCI_SKIP_ENV_CHECK=1`, a dummy `ANTHROPIC_API_KEY`, redirects `MINDCI_*` paths to a temp directory, and stubs `pipeline._client.get_client` so the suite never touches the network.
 

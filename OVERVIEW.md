@@ -59,4 +59,4 @@ The dashboard runs in your browser (Streamlit). You get:
 
 ## The long version
 
-If you want all the technical details – file structure, CLI commands, 74 tests, CPM markers, confidence sparklines, and the exact hysteresis algorithm – read the [full README](README.md). But you don't need any of that to start using it.
+If you want all the technical details – file structure, CLI commands, 144 tests, the gap-analysis evaluation harness (`python eval.py`), CPM markers, confidence sparklines, and the exact hysteresis algorithm – read the [full README](README.md). But you don't need any of that to start using it.

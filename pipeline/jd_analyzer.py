@@ -7,21 +7,26 @@ from pipeline._client import call_with_retry
 from pipeline.calibration import effective_confidence
 
 
-def run_gap_analysis(jd_text, knowledge_base, resume_claims=None):
-    """Single-JD readiness analysis.
-
-    When `resume_claims` (dict with `skills`/`projects`/`companies`) is provided,
-    the prompt includes the resume context and the response gains three
-    additional buckets (`strengths_to_lead_with`, `exposures`, `hidden_assets`)
-    that classify each domain by where it appears across JD ⨯ Resume ⨯ KB.
-    Falls back to the original schema when `resume_claims` is None.
-    """
-    kb_summary = [{
+def _kb_summary(knowledge_base):
+    """Condense full KB entries to the {domain, type, confidence, difficulty}
+    shape the gap-analysis prompt sends to the model. Shared so single-JD and
+    batch paths never drift."""
+    return [{
         "domain": e.get("topic") or e.get("concept") or e.get("tool") or e.get("error", "unknown"),
         "type": e.get("type"),
         "confidence": effective_confidence(e) if (e.get("auto_confidence") or e.get("confidence")) else "Unknown",
         "difficulty": e.get("difficulty", "Unknown"),
     } for e in knowledge_base]
+
+
+def build_gap_analysis_prompt(jd_text, knowledge_base, resume_claims=None):
+    """Construct the exact single-JD gap-analysis prompt sent to the model.
+
+    Extracted from ``run_gap_analysis`` so the eval harness can exercise the
+    *same* prompt the app uses without duplicating it (no prompt drift between
+    production and evaluation). Pure string-building -- no API call.
+    """
+    kb_summary = _kb_summary(knowledge_base)
 
     resume_block = ""
     extra_schema = ""
@@ -47,7 +52,7 @@ CLASSIFY each JD-relevant domain into exactly ONE of these buckets:
 
 Each domain belongs to exactly one bucket. Don't double-count."""
 
-    prompt = f"""You are analyzing a job description against a candidate's technical knowledge base{" and resume claims" if resume_claims else ""}.
+    return f"""You are analyzing a job description against a candidate's technical knowledge base{" and resume claims" if resume_claims else ""}.
 
 CANDIDATE KNOWLEDGE BASE:
 {json.dumps(kb_summary, indent=2)}
@@ -66,6 +71,18 @@ Return ONLY a JSON object, no markdown, no extra text:
   "strengths": ["..."],
   "summary": "2 sentence readiness summary"{extra_schema}
 }}"""
+
+
+def run_gap_analysis(jd_text, knowledge_base, resume_claims=None):
+    """Single-JD readiness analysis.
+
+    When `resume_claims` (dict with `skills`/`projects`/`companies`) is provided,
+    the prompt includes the resume context and the response gains three
+    additional buckets (`strengths_to_lead_with`, `exposures`, `hidden_assets`)
+    that classify each domain by where it appears across JD ⨯ Resume ⨯ KB.
+    Falls back to the original schema when `resume_claims` is None.
+    """
+    prompt = build_gap_analysis_prompt(jd_text, knowledge_base, resume_claims)
 
     _text = call_with_retry(prompt, max_tokens=MAX_TOKENS_ANALYSIS)
     raw = _text.strip()
